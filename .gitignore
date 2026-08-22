@@ -1,8 +1,8 @@
-# 构建产物
-index.js
-tools/*.js
-routes/*.js
-assets/
+# 构建产物（仅插件根，不匹配 src-server/ 下的同名源码）
+/index.js
+/tools/
+/routes/
+/assets/
 
 # 日志与临时文件
 *.log
