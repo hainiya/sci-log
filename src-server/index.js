@@ -25,23 +25,26 @@ export default class MaterialsResearchCopilotPlugin {
     };
 
     // ── 会话事件（用户消息 → 自动同步 Zotero 本地库） ──
-    this._unsubSession = ctx.bus.subscribe(
+    // 注意：bus.subscribe 返回的句柄 / setInterval 返回的 Timeout 都含循环引用（_idlePrev/_idleNext），
+    // 不能挂到插件实例 this 上（宿主在安装/启用时会序列化插件实例，遇到 Timeout 会抛
+    // "Converting circular structure to JSON"）。全部收为局部变量，仅把 cleanup 函数交给 register()。
+    const unsubSession = ctx.bus.subscribe(
       (event, sessionPath) => this._onSessionEvent(event, sessionPath),
       { types: ["session_user_message"] }
     );
-    register(this._unsubSession);
+    register(() => typeof unsubSession === "function" && unsubSession());
 
     // ── 内部事件：绑定变化 → 重新加载 ──
-    this._unsubBinding = ctx.bus.subscribe(
+    const unsubBinding = ctx.bus.subscribe(
       () => this._reloadBinding(),
       { types: ["materials-research-copilot:binding-changed"] }
     );
-    register(this._unsubBinding);
+    register(() => typeof unsubBinding === "function" && unsubBinding());
 
     // ── Zotero 全量镜像同步：30 分钟间隔，异步不阻塞消息流 ──
-    this._zoteroTimer = setInterval(() => this._syncZoteroNow(), 30 * 60 * 1000);
-    this._zoteroTimer.unref?.();
-    register(() => clearInterval(this._zoteroTimer));
+    const zoteroTimer = setInterval(() => this._syncZoteroNow(), 30 * 60 * 1000);
+    zoteroTimer.unref?.();
+    register(() => clearInterval(zoteroTimer));
 
     // ── 初始化 ──
     this._reloadBinding();

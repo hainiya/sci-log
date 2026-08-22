@@ -5,6 +5,13 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // @hana/* 通过 symlink 指向 openhanako/packages;默认 vite 会 realpath 到真实目录,
+    // 再从那里解析 @hana/* / react 会找不到(openhanako 根无 link)。关闭 realpath,
+    // 让解析沿 node_modules/@hana 的 link 路径进行,react 也从插件根命中。
+    preserveSymlinks: true,
+    dedupe: ['react', 'react-dom'],
+  },
   define: {
     'process.env.NODE_ENV': '"production"',
   },

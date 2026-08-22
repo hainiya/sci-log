@@ -99,7 +99,7 @@ export default function registerApiRoutes(app, ctx) {
       } catch {
         return c.json({ error: "invalid_json" }, 400);
       }
-      const { version, data, evolution } = body || {};
+      const { version, data } = body || {};
       if (data === undefined) {
         return c.json({ error: "missing_data" }, 400);
       }
