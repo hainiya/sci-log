@@ -290,7 +290,6 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
         }))
         .slice(0, 3)
     : [];
-  const planNote = typeof parsed?.planNote === "string" && parsed.planNote.trim() ? parsed.planNote.trim().slice(0, 300) : null;
 
   // 实验时长：明确持续时长（小时），供甘特图投影实际时间线
   const rawDur = parsed?.durationHours;
@@ -303,16 +302,7 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
       ? parsed.startDate
       : null;
 
-  // P0-3：失败重做标记（仅当记录明确负面表述且关联任务时才为 true）
-  const needRedo = Boolean(parsed?.needRedo) && (worklogEntryHasTask(entries) || taskList.length > 0);
-  const redoReason =
-    needRedo && typeof parsed?.redoReason === "string" && parsed.redoReason.trim()
-      ? parsed.redoReason.trim().slice(0, 60)
-      : needRedo
-      ? "实验记录表明未达预期"
-      : null;
-
-  return { fields, citations, system, taskProgress, events, planNote, needRedo, redoReason, durationHours, startDate };
+  return { fields, citations, system, taskProgress, events, durationHours, startDate };
 }
 
 /** 本地时区今天（YYYY-MM-DD），用于 startDate 不晚于今天的保守校验 */
@@ -320,12 +310,6 @@ function localTodayStr() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-/** 判断巡检记录是否关联到某个甘特任务（用于 needRedo 的保守判定） */
-function worklogEntryHasTask(entries) {
-  const e = Array.isArray(entries) ? entries[0] : null;
-  return Boolean(e && (e.taskId || (typeof e.content === "string" && /任务|实验|样品|sample/i.test(e.content))));
 }
 
 const SCHEDULE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
