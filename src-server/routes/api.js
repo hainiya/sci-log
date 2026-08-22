@@ -1,22 +1,20 @@
 /**
  * 面板数据 API（routes/api.js，挂载前缀 /api）
  * - 读写 + 乐观锁 + api/changes 增量接口（面板轮询）
- * - 设置抽屉：文献目录管理 / 会话绑定管理 / 拒绝记录清空
- * - 文献扫描与报告刷新
+ * - 设置抽屉：文献目录管理 / 会话绑定管理
+ * - 文献扫描、Zotero 探测、指标序列
+ *
+ * 实验记录中心化改造后：移除 plan / report / assessment / proposals / rejected / review 相关路由。
  */
 import fs from "node:fs";
 import path from "node:path";
 import { createStore } from "../server/store.js";
-import { createProposal } from "../server/proposals.js";
 import { triageWorklog } from "../server/triage.js";
 import { readSettings, writeSettings, scanAllSources, zoteroProbe, runEnhancementLoop, enrichCitationCounts } from "../server/sources.js";
-import { analyzeLiterature, extractKeywords, draftProposalFromGuide, extractClusters, assessPlanAgainstLiterature, parsePlanAssessment } from "../server/llm.js";
 import { buildMetricsSeries } from "../server/metrics.js";
 import { parseMetricTable } from "../server/import-parser.js";
-import { appendPlanEvolution } from "../server/evolution.js";
-import { mergeMilestoneDiff } from "../tools/assess-plan.js";
 
-const WRITABLE = new Set(["plan", "gantt", "calendar", "worklog", "literature"]);
+const WRITABLE = new Set(["worklog", "gantt", "calendar", "literature"]);
 
 export default function registerApiRoutes(app, ctx) {
   const store = createStore(ctx.dataDir);
@@ -32,14 +30,11 @@ export default function registerApiRoutes(app, ctx) {
   // ── 全量状态 ──────────────────────────────────────────────
   app.get("/state", (c) => {
     const state = {};
-    for (const name of ["binding", "plan", "plan-evolution", "gantt", "calendar", "literature", "worklog", "reviews", "rejected", "settings", "report", "collections", "proposals", "assessment"]) {
+    for (const name of ["binding", "gantt", "calendar", "literature", "worklog", "settings", "collections"]) {
       if (name === "literature") {
-        // E5：fullText 不进 UI state（60k-100k × 129 ≈ 10MB 级传输）——按需读取
+        // E5：fullText 不进 UI state（60k-100k × N ≈ 10MB 级传输）——按需读取
         const doc = store.read(name);
         state[name] = { ...doc, entries: (doc.entries || []).map(({ fullText, ...rest }) => rest) };
-      } else if (name === "plan-evolution") {
-        // 演进史 UI 需要快照列表（判断回退/查看可用性）；快照动态计算不落盘
-        state[name] = { ...store.read(name), snapshots: store.listSnapshots("plan") };
       } else {
         state[name] = store.read(name);
       }
@@ -127,20 +122,8 @@ export default function registerApiRoutes(app, ctx) {
       if (!result.ok) {
         return c.json({ error: "version_conflict", data: result.data }, 409);
       }
-      if (name === "plan" && result.ok) {
-        const ev = evolution;
-        appendPlanEvolution(store, {
-          version: result.data.version,
-          by: "user",
-          types: Array.isArray(ev?.types)
-            ? ev.types.filter((t) => ["material", "process", "scope", "direction", "other"].includes(t))
-            : [],
-          reason: typeof ev?.reason === "string" ? ev.reason.slice(0, 300) : "",
-          experimentKeys: Array.isArray(ev?.experimentKeys) ? ev.experimentKeys.map(String).slice(0, 20) : [],
-        });
-      }
-      // 实验记录写入后触发 AI 巡检（异步，不阻塞响应）：参数结构化/文献关联/甘特进度/日程/方案对比 → 全部走提案
-      // autoTriage 开关（宿主配置优先，回退 settings.json 旧值；默认 true）：关闭则跳过自动巡检；手动 force 端点不受限
+      // 实验记录写入后触发 AI 巡检（异步，不阻塞响应）：参数结构化/文献关联/甘特进度/日程识别 → 直接写库
+      // autoTriage 开关（宿主配置优先，回退 settings.json 旧值；默认 true）：关闭则跳过自动巡检
       if (name === "worklog" && result.ok) {
         const settings = readSettings(ctx, store);
         const autoTriage = ctx.config.get?.("autoTriage") ?? settings.autoTriage ?? true;
@@ -175,7 +158,6 @@ export default function registerApiRoutes(app, ctx) {
     if (parsed.records.length === 0) {
       return c.json({ ok: false, error: "no_valid_rows", errors: parsed.errors, summary: parsed.summary }, 400);
     }
-    const plan = store.read("plan");
     const now = store.now();
     const stamp = Date.now().toString(36);
     const entries = parsed.records.map((r, i) => ({
@@ -185,7 +167,6 @@ export default function registerApiRoutes(app, ctx) {
       content: r.contentParts.length > 0 ? r.contentParts.join("；") : `批量导入（${today}）`,
       data: null,
       taskId: null,
-      planVersion: plan.version,
       durationHours: null,
       startDate: null,
       createdAt: now,
@@ -226,37 +207,7 @@ export default function registerApiRoutes(app, ctx) {
     return c.json({ ok: !result?.error, ...result });
   });
 
-  // ── C1：方案引导草案（空方案时面板调用） ──────────────────
-  app.post("/guide/proposal-draft", async (c) => {
-    let body;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "invalid_json" }, 400);
-    }
-    const { background, problem, data } = body || {};
-    if (!String(background || "").trim() && !String(problem || "").trim()) {
-      return c.json({ error: "missing_input", message: "至少填写课题背景或要解决的问题" }, 400);
-    }
-    try {
-      const draft = await draftProposalFromGuide(ctx, { background, problem, data });
-      if (!draft) return c.json({ error: "draft_failed", message: "草案生成失败，请稍后重试" }, 500);
-      const planVersion = store.read("plan").version;
-      const result = createProposal(store, {
-        target: "plan",
-        action: "update",
-        diff: draft,
-        reason: `方案引导草案：${draft.title}`,
-        baseVersion: planVersion,
-      });
-      return c.json({ ok: true, draft, proposalId: result.entry?.id || null, applied: !!result.applied });
-    } catch (err) {
-      ctx.log.error("proposal draft failed:", err.message);
-      return c.json({ error: "draft_failed", detail: err.message }, 500);
-    }
-  });
-
-  // ── literature 追加式（在线/扫描入库共用） ────────────────
+  // ── literature 追加式（扫描入库共用） ────────────────
   app.post("/literature/append", async (c) => {
     let body;
     try {
@@ -268,145 +219,6 @@ export default function registerApiRoutes(app, ctx) {
     if (items.length === 0) return c.json({ ok: true, appended: 0 });
     const result = store.append("literature", items);
     return c.json({ ok: true, appended: result.appended, data: result.data });
-  });
-
-  // ── 报告 ──────────────────────────────────────────────────
-  app.get("/reviews", (c) => c.json(store.read("reviews")));
-
-  app.get("/report", (c) => c.json(store.read("report")));
-
-  /** 显式触发文献分析报告（首屏不自动调 LLM，必须用户动作触发）
-   *  E6：支持范围 scope（all / {type:'recent', n} / {type:'collection', key, label}）
-   */
-  app.post("/report/refresh", async (c) => {
-    try {
-      let scope = null;
-      try {
-        scope = (await c.req.json())?.scope || null;
-      } catch {}
-      let literature = store.read("literature");
-      let scopeNote = `全库（${(literature.entries || []).length} 篇）`;
-      if (scope?.type === "recent" && Number(scope.n) > 0) {
-        const n = Math.min(Number(scope.n) || 20, 200);
-        literature = { ...literature, entries: (literature.entries || []).slice(-n) };
-        scopeNote = `最近 ${literature.entries.length} 篇`;
-      } else if (scope?.type === "collection" && scope.key) {
-        const key = scope.key;
-        literature = {
-          ...literature,
-          entries: (literature.entries || []).filter((e) => (e.collectionKeys || []).includes(key)),
-        };
-        scopeNote = `collection「${scope.label || key}」${literature.entries.length} 篇`;
-      }
-      const plan = store.read("plan");
-      const report = await analyzeLiterature(ctx, literature, plan);
-      const content = `> 分析范围：${scopeNote}\n\n${report}`;
-      const clusters = extractClusters(report);
-      store.write("report", {
-        version: 0,
-        content,
-        clusters,
-        scope: scope?.type || "all",
-        updatedAt: store.now(),
-        planVersion: plan.version,
-        literatureVersion: literature.version,
-        // E5（复审）：手动刷新视为已消费当前文献版本，防止 _maybeAutoReport 按 `?? 0` 误判
-        // newCount≥阈值而立即再跑一次全库报告覆盖本次 scope 报告
-        basedOnLiteratureVersion: literature.version,
-      });
-      store.bump("report");
-      return c.json({ ok: true, report: content, clusters });
-    } catch (err) {
-      ctx.log.error("report refresh failed:", err.message);
-      return c.json({ error: "report_failed", detail: err.message }, 500);
-    }
-  });
-
-  // ── 方案演进史 ─────────────────────────────────────────────
-  app.get("/plan/evolution", (c) => {
-    const doc = store.read("plan-evolution");
-    return c.json({ entries: doc.entries || [], snapshots: store.listSnapshots("plan") });
-  });
-
-  app.get("/plan/evolution/:version", (c) => {
-    const v = Number(c.req.param("version"));
-    if (!Number.isInteger(v) || v <= 0) return c.json({ error: "invalid_version" }, 400);
-    const file = path.join(ctx.dataDir, "snapshots", "plan", `${v}.json`);
-    if (!fs.existsSync(file)) return c.json({ error: "no_snapshot" }, 404);
-    return c.json({ version: v, content: JSON.parse(fs.readFileSync(file, "utf-8")) });
-  });
-
-  // ── P1-2：文献对照评估（从方案页「文献对照评估」按钮触发） ──
-  app.post("/plan/assess", async (c) => {
-    try {
-      let force = false;
-      try {
-        force = Boolean((await c.req.json())?.force);
-      } catch {}
-      const plan = store.read("plan");
-      const literature = store.read("literature");
-      if ((literature.entries || []).length === 0) {
-        return c.json({ error: "empty_literature", message: "文献库为空，无法对照评估" }, 400);
-      }
-      const prev = store.read("assessment");
-      const fresh =
-        force ||
-        !prev.updatedAt ||
-        prev.planVersion !== plan.version ||
-        prev.literatureVersion !== literature.version;
-      if (!fresh) {
-        return c.json({
-          ok: true,
-          reused: true,
-          content: prev.content,
-          gaps: prev.gaps || [],
-          updatedAt: prev.updatedAt,
-          planVersion: prev.planVersion,
-          literatureVersion: prev.literatureVersion,
-        });
-      }
-      const raw = await assessPlanAgainstLiterature(ctx, { plan, literature });
-      const { report, suggestions, gaps } = parsePlanAssessment(raw);
-      store.write("assessment", {
-        version: 0,
-        content: report,
-        gaps: gaps || [],
-        updatedAt: store.now(),
-        planVersion: plan.version,
-        literatureVersion: literature.version,
-      });
-      store.bump("assessment");
-      // SUGGESTIONS → 方案修改提案
-      const proposalResults = [];
-      for (const s of suggestions) {
-        try {
-          // 与工具路径行为对齐：里程碑合并守卫（LLM 建议只含部分里程碑时整段替换会丢其余）
-          const diff = mergeMilestoneDiff(s.diff, plan.milestones);
-          const result = createProposal(store, {
-            target: "plan",
-            action: "update",
-            diff,
-            reason: `文献对照评估建议：${s.reason || "依据评估结论"}`,
-            baseVersion: plan.version,
-          });
-          proposalResults.push(result);
-        } catch {}
-      }
-      return c.json({
-        ok: true,
-        reused: false,
-        content: report,
-        gaps: gaps || [],
-        suggestions: suggestions.length,
-        proposals: proposalResults.length,
-        updatedAt: store.now(),
-        planVersion: plan.version,
-        literatureVersion: literature.version,
-      });
-    } catch (err) {
-      ctx.log.error("plan assess failed:", err.message);
-      return c.json({ error: "assess_failed", detail: err.message }, 500);
-    }
   });
 
   // ── E5：手动触发 OpenAlex 引用数补全（多轮铺完） ──────────
@@ -431,28 +243,12 @@ export default function registerApiRoutes(app, ctx) {
         status: "new",
         ...e,
       }));
-      // 入库走追加式（自动扫描按 autoApproveLiterature 决定是否直入）
-      const autoApprove = ctx.config.get?.("autoApproveLiterature") ?? true;
-      let appended = 0;
-      if (autoApprove) {
-        const result = store.append("literature", enriched);
-        appended = result.appended;
-      } else {
-        // 生成批量提案（面板逐个确认）
-        for (const entry of enriched) {
-          createProposal(store, {
-            target: "literature",
-            action: "create",
-            diff: entry,
-            reason: `扫描到新文献：${entry.title}`,
-          });
-        }
-      }
+      // 入库走追加式（实验记录中心化：自动扫描直接入库，AI 写即生效）
+      const appended = store.append("literature", enriched).appended;
       return c.json({
         ok: true,
         found: entries.length,
         appended,
-        pendingProposals: autoApprove ? 0 : enriched.length,
         warnings,
         sourceStats,
       });
@@ -470,8 +266,6 @@ export default function registerApiRoutes(app, ctx) {
     const entries = doc.entries || [];
     let targets;
     if (body?.all === true) {
-      // FIX(2026-08-06)：all 模式必须过滤非字符串 id——无 id 条目的 id=undefined 会与 Zotero 镜像（无 id）共享同一值，
-      // 导致 removable 含 undefined 后把所有无 id 条目（含全部镜像）连带删除（生产事故：清空待整理删光 155 条）
       targets = entries.filter((e) => e.source !== "zotero" && typeof e.id === "string").map((e) => e.id);
     } else if (Array.isArray(body?.ids)) {
       targets = body.ids.filter((id) => typeof id === "string" && id);
@@ -483,7 +277,6 @@ export default function registerApiRoutes(app, ctx) {
     );
     if (removable.size === 0) return c.json({ ok: true, removed: 0 });
     const result = store.update("literature", doc.version, (cur) => ({
-      // 双保险：无 id 条目永不参与删除（undefined/null id 一律保留）
       entries: (cur.entries || []).filter((e) => typeof e.id !== "string" || !removable.has(e.id)),
     }));
     if (!result.ok) {
@@ -494,7 +287,6 @@ export default function registerApiRoutes(app, ctx) {
 
   // ── E3：手动增强（✨ AI 摘要：生成/翻译摘要 + 提取关键词；fire-and-forget 启动新一轮循环铺完） ──
   app.post("/literature/enhance-pdfs", async (c) => {
-    // 手动按钮 = 启动新一轮循环铺完（后台循环不阻塞响应；结束后 bump 版本供前端刷新）
     runEnhancementLoop(ctx, store)
       .then((r) => {
         store.bump("literature");
@@ -523,42 +315,6 @@ export default function registerApiRoutes(app, ctx) {
     const probe = await zoteroProbe(ctx, port);
     zoteroProbeCache = { at: Date.now(), result: probe };
     return c.json({ port, ...probe });
-  });
-
-  // ── C4：本周概况（组会周报快照） ──────────────────────────
-  app.get("/summary/week", (c) => {
-    const now = Date.now();
-    const day = new Date(now).getDay() || 7; // 周日=7
-    const weekStart = new Date(now - (day - 1) * 86400000);
-    weekStart.setHours(0, 0, 0, 0);
-    const startIso = weekStart.toISOString();
-    const inWeek = (iso) => iso && String(iso) >= startIso;
-
-    const worklog = store.read("worklog");
-    const literature = store.read("literature");
-    const gantt = store.read("gantt");
-    const reviews = store.read("reviews");
-
-    const workCount = (worklog.entries || []).filter((e) => inWeek(e.createdAt)).length;
-    const litCount = (literature.entries || []).filter((e) => inWeek(e.addedAt)).length;
-    const tasks = gantt.tasks || [];
-    const progressed = tasks.filter((t) => t.progress && t.progress > 0);
-    const avgProgress = tasks.length > 0
-      ? Math.round(tasks.reduce((s, t) => s + (Number(t.progress) || 0), 0) / tasks.length)
-      : 0;
-    const lastReview = (reviews.entries || []).at(-1);
-
-    return c.json({
-      weekStart: startIso,
-      workCount,
-      litCount,
-      taskCount: tasks.length,
-      progressedCount: progressed.length,
-      avgProgress,
-      lastReview: lastReview
-        ? { date: lastReview.date || null, summary: String(lastReview.report || "").slice(0, 120) }
-        : null,
-    });
   });
 
   // ── P1：指标时间线（从实验记录抽取性能数值，按体系/时间分组） ──
@@ -609,7 +365,6 @@ export default function registerApiRoutes(app, ctx) {
 
   // ── 设置抽屉：实验记录自动巡检开关（autoTriage，默认 true）──
   // 仅控制「写入后自动巡检」；手动 force 巡检（POST /worklog/triage）不受开关限制
-  // 2026-08-07 迁入宿主配置（manifest.configuration + ctx.config），不再写 settings.json（读兼容保留）
   app.post("/settings/auto-triage", async (c) => {
     let body = {};
     try { body = await c.req.json(); } catch {}
@@ -644,9 +399,6 @@ export default function registerApiRoutes(app, ctx) {
       source,
     };
     store.write("binding", next);
-    // 通知 lifecycle 刷新订阅（E4 复审：统一走 bus 事件通道——lifecycle 只订阅 bus 的
-    // "materials-research-copilot:binding-changed"，appEvents 的 "binding-changed" 无订阅方，
-    // 原来手动绑定后自动搜集静默按旧绑定运行。保留 appEvents 发射兼容宿主侧可能存在的监听）
     try {
       ctx.bus?.emit?.({ type: "materials-research-copilot:binding-changed", sessionId }, null);
       ctx.appEvents.emit("binding-changed", { sessionId });
@@ -667,15 +419,6 @@ export default function registerApiRoutes(app, ctx) {
       ctx.appEvents.emit("binding-changed", { sessionId: null });
     } catch {}
     return c.json({ ok: true, previous: current });
-  });
-
-  // ── 设置抽屉：拒绝记录 ────────────────────────────────────
-  app.get("/rejected", (c) => c.json(store.read("rejected")));
-
-  app.post("/rejected/clear", (c) => {
-    store.write("rejected", { version: 0, entries: [], updatedAt: store.now() });
-    store.bump("rejected");
-    return c.json({ ok: true });
   });
 
   // ── 快照/回退 ─────────────────────────────────────────────
@@ -699,14 +442,6 @@ export default function registerApiRoutes(app, ctx) {
     }
     const result = store.rollback(name, toVersion);
     if (!result.ok) return c.json({ error: result.error }, 400);
-    if (name === "plan") {
-      appendPlanEvolution(store, {
-        version: result.data.version,
-        by: "rollback",
-        types: [],
-        reason: toVersion !== undefined ? `回退到 v${toVersion}` : "回退到上一版本",
-      });
-    }
     return c.json({ ok: true, data: result.data });
   });
 }
