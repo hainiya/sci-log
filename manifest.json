@@ -2,8 +2,8 @@
   "manifestVersion": 1,
   "id": "materials-research-copilot",
   "name": "科研工作",
-  "version": "0.1.0",
-  "description": "科研工作：研究方案管理 + 甘特图 + 日历 + 文献库 + 任务清单 + 实验记录审查",
+  "version": "0.2.0",
+  "description": "科研工作：实验记录中心 + 甘特图/日历 + 指标趋势 + 文献库（Zotero 收纳）",
   "minAppVersion": "0.159.0",
   "trust": "full-access",
   "capabilities": [
@@ -17,10 +17,6 @@
   ],
   "network": {
     "allowedHosts": [
-      "api.semanticscholar.org",
-      "export.arxiv.org",
-      "api.crossref.org",
-      "api.openalex.org",
       "localhost",
       "127.0.0.1"
     ],
@@ -52,21 +48,21 @@
         "autoCollectEnabled": {
           "type": "boolean",
           "default": true,
-          "title": "讨论确定方向后自动搜集文献",
-          "description": "绑定会话后，检测到研究方向性讨论时自动检索相关文献并入库存"
+          "title": "绑定会话后自动同步 Zotero",
+          "description": "绑定会话后，用户消息触发时自动同步 Zotero 本地文献库并日志化到实验记录"
         },
-    "autoApproveLiterature": {
-      "type": "boolean",
-      "default": true,
-      "title": "新增文献免提案确认",
-      "description": "自动检索/扫描新增的文献直接入库（删除与修改仍需逐条确认）"
-    },
-    "autoTriage": {
-      "type": "boolean",
-      "default": true,
-      "title": "实验记录自动巡检",
-      "description": "每次实验记录写入后自动 AI 巡检（参数结构化/文献关联/甘特进度/日程/时长提取），生成提案待确认；关闭后仍可手动巡检"
-    }
+        "autoApproveLiterature": {
+          "type": "boolean",
+          "default": true,
+          "title": "新增文献直接入库",
+          "description": "自动同步/扫描新增的文献直接入库（AI 写即生效，删除与修改仍受只读镜像保护）"
+        },
+        "autoTriage": {
+          "type": "boolean",
+          "default": true,
+          "title": "实验记录自动巡检",
+          "description": "每次实验记录写入后自动 AI 巡检（参数结构化/文献关联/甘特进度/日程/时长提取），直接写库；关闭后仍可手动巡检"
+        }
       }
     }
   },
@@ -76,35 +72,35 @@
   "dev": {
     "scenarios": [
       {
-        "id": "smoke-manage-plan",
+        "id": "smoke-manage-schedule",
         "steps": [
           {
             "invokeTool": {
-              "name": "manage_plan",
+              "name": "manage_schedule",
               "input": {
                 "action": "read",
-                "target": "plan"
+                "target": "gantt"
               }
             }
           },
           {
-            "expectToolText": "研究方案"
+            "expectToolText": "甘特图任务"
           }
         ]
       },
       {
-        "id": "smoke-export-report",
+        "id": "smoke-export-worklog",
         "steps": [
           {
             "invokeTool": {
               "name": "export_report",
               "input": {
-                "type": "report"
+                "type": "worklog"
               }
             }
           },
           {
-            "expectToolText": "报告"
+            "expectToolText": "实验记录"
           }
         ]
       }
