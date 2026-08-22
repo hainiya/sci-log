@@ -1,102 +1,133 @@
-# AI 主导生成实验记录设计
+# AI 主导生成实验记录设计（方案 A：会话内交互确认）
 
 > 日期：2026-08-22
 > 插件：materials-research-copilot（Hana 插件）
-> 模块：绑定会话 → AI 生成实验记录 → 写入 worklog
+> 模块：绑定会话 → AI 总结 → 会话内询问 → 用户确认 → 写入 worklog
 
 ## 一、目标与背景
 
-当前插件是"实验记录中心"。写入实验记录的唯一路径是用户在「实验记录」面板**手动填表单**。本功能新增一条**AI 主导**的写入路径：
+当前插件写入实验记录的路径只有「实验记录」面板手动填表。本功能新增一条 **AI 主导 + 用户会话内确认** 的写入路径：
 
-- 在**绑定会话**里，用户消息文本包含**关键词「记录」**时，AI 自动把该消息/讨论聚合成一条实验记录，写入 `worklog`。
-- 生成的记录**用户可在面板随时修改/删除**（沿用现有 WorklogPanel 的编辑/删除能力）。
-- 这是对"记录实验"的高频路径的补充，让用户不离开会话就能沉淀实验记录。
+- 在**绑定会话**里，用户消息文本包含关键词「记录」时，AI 把该消息/讨论聚合成一条实验记录草稿。
+- **AI 在会话里主动询问用户是否记录**；用户回复确认后才落库到 `worklog`。
+- 这样既**不担心重复**（用户亲自判断），又**不影响短时间连录多条**（每条都是独立确认，无时间窗限制）。
 
-## 二、核心决策（已确认/采用的可逆默认）
+## 二、核心决策（已确认）
 
-| 决策点 | 选择 | 理由 / 可逆性 |
-|---|---|---|
-| 触发 | 绑定会话内，消息文本含关键词「记录」 | 用户明确指定；误触发面小 |
-| 生成主体 | AI（`sampleText` 非流式 LLM 调用） | 符合"AI 主导" |
-| 落库方式 | **直接落库** + 标记 `aiGenerated: true` | 用户可随时改/删；字段可逆 |
-| 去重 | 同会话时间窗限频（默认 15 分钟 1 次） | 简单可靠，不额外耗 LLM |
-| 生成范围 | 取含「记录」的这条消息 | 最直接，可后续扩展 |
+| 决策点 | 选择 |
+|---|---|
+| 触发 | 绑定会话内，消息文本含关键词「记录」 |
+| 生成主体 | AI（`sampleText` 非流式 LLM 调用） |
+| 确认方式 | **会话内交互确认**：AI 发问 → 用户回复确认 → 落库 |
+| 落库字段 | 对齐 WorklogPanel 表单 + `aiGenerated: true`/`sourceSession`/`generatedAt` |
+| 去重 | **不靠时间窗**；AI 总结草稿 + 用户亲自确认（确认即人工去重） |
+| 状态管理 | 插件实例内存持有"待确认草稿"（不持久化，会话重启丢失） |
 
-## 三、架构与数据流
+## 三、交互状态机
+
+```
+[空闲] --用户消息含「记录」--> [生成草稿]
+   AI summary(sampleText) → 草稿 draft
+   AI 发消息问：检测到实验记录，是否记录？（附草稿摘要；回复"记录/好/是"确认）
+   → [待确认]
+
+[待确认] --用户回复 确认词(记录/好/是/确认/ok)--> [落库]
+   把草稿 append 到 worklog
+   发消息：已记录 ✅
+   → [空闲]
+
+[待确认] --用户回复 拒绝词(不/不用/不要/算了/取消)--> [丢弃]
+   发消息：好的，已取消记录
+   → [空闲]
+
+[待确认] --用户回复 其它(非确认非拒绝 且 不再含"记录")--> 维持 [待确认]
+   （可选：把该回复追加进草稿重新总结，首版忽略，仅提示"回复 记录 或 不 即可"）
+
+[待确认] --用户回复含新"记录"--> 视为确认（同确认词）
+```
+
+**关键冲突处理**：确认消息本身可能含"记录"（如"记录"就是确认）。状态机以**当前是否处于 [待确认]** 为准：
+- 处于 [待确认] 时，一切用户消息优先按确认/拒绝解释（含"记录"视为确认）。
+- 处于 [空闲] 时，含"记录"的消息才触发新草稿。
+
+## 四、架构与数据流
 
 ```
 宿主会话用户消息
    └─ ctx.bus event "session_user_message"（绑定会话）
         └─ _onSessionEvent(event, sessionPath)        [src-server/index.js]
-             ├─ 消息文本含「记录」？  ──否──> 仅原有 Zotero 同步
-             └─ 是
-                  ├─ 限频通过？（同会话 15 分钟窗口）
-                  └─ 是
-                       └─ generateWorklogFromText(ctx, store, { text, sessionPath })
-                            ├─ readPrompt("worklog-generate.md")           [prompts/]
-                            ├─ sampleText(ctx, { callPoint:"generateWorklog", ... })
-                            │      → LLM 输出 JSON { content, sampleId, system,
-                            │          data, taskId, durationHours, startDate }
-                            ├─ 解析/校验（防御非 JSON）
-                            └─ store.update("worklog", ...) 追加一条
-                                 fields: { id, sampleId, system, date, content, data,
-                                           taskId, durationHours, startDate,
-                                           aiGenerated: true, sourceSession, generatedAt }
+             ├─ 若已有待确认草稿：按确认/拒绝处理（见状态机）→ 落库或丢弃
+             ├─ 否则(空闲) + 消息含「记录」：
+             │     └─ generateDraft(ctx, store, { text, sessionPath })
+             │           ├─ readPrompt("worklog-generate.md")
+             │           ├─ sampleText → LLM 输出 JSON 草稿
+             │           ├─ 解析/校验 → draft
+             │           ├─ 存 _pendingDraft = { draft, sessionPath, ts }
+             │           └─ sendSessionMessage(ctx, {sessionRef}, {
+             │                 role:"assistant",
+             │                 text:"检测到实验记录草稿：…\n回复「记录」确认，回复「不」取消。"
+             │               })
+             └─ 否则：仅原有 Zotero 同步
+
+用户回复确认 → [落库] store.update("worklog", ...) append draft
+   fields: { id, sampleId, system, date, content, data, taskId,
+             durationHours, startDate, aiGenerated:true, sourceSession, generatedAt }
 ```
 
-## 四、组件划分
+## 五、组件划分
 
 1. **`src-server/server/worklog-gen.js`**（新增）
-   - `export async function generateWorklogFromText(ctx, store, { text, sessionPath })`
-   - 职责：读 prompt → 调 `sampleText` → 解析 JSON → `store.update("worklog")` 追加。
-   - 返回 `{ ok: true/false, id?, reason? }`。
-   - 只在生成的记录上附加 `aiGenerated`/`sourceSession`/`generatedAt`。
+   - `generateDraft(ctx, { text, sessionPath })`：读 prompt → `sampleText` → 解析成草稿对象。返回 `{ content, sampleId, system, data, taskId, durationHours, startDate }` 或 `null`。
+   - `commitDraft(ctx, store, draft, { sessionPath })`：`store.update("worklog", ...)` append 一条，附加 `aiGenerated`/`sourceSession`/`generatedAt`。
+   - `parseDraft(raw)`（可导出纯函数）：LLM 输出 → JSON → 清洗/校验，便于单测。
 
 2. **`prompts/worklog-generate.md`**（新增）
-   - system prompt：从给定会话消息提取一条实验记录。
-   - 输出严格 JSON，字段对齐 WorklogPanel 表单：
+   - system prompt：从会话消息提取一条实验记录，输出严格 JSON：
      `{ "content": string, "sampleId": string|null, "system": string|null, "data": string|null, "taskId": string|null, "durationHours": number|null, "startDate": "YYYY-MM-DD"|null }`
-   - 约束：`content` 必填、简明（≤300 字）；无法确定的字段给 null。
+   - `content` 必填、简明（≤300 字）；无法确定的字段给 null。
 
 3. **`src-server/index.js`**（改 `_onSessionEvent`）
-   - 现有逻辑保留（Zotero 同步）。
-   - 新增：消息含「记录」且限频通过 → 调 `generateWorklogFromText`（fire-and-forget，失败仅 log）。
+   - 新增实例字段 `_pendingDraft = null`（`{ draft, sessionPath, ts }`）。
+   - 事件内：先判 `_pendingDraft`（确认/拒绝），再判空闲触发（含「记录」）。
+   - 复用 `sendSessionMessage`（@hana/plugin-runtime）往会话发询问/结果消息。
+   - 失败仅 `ctx.log.warn`，不阻塞消息流。
 
-4. **`src-server/server/worklog-gen.js` 依赖注入**
-   - `sampleText`、`readPrompt`、`store`、`localTodayStr` 均已有/复用 llm.js 既有实现，不重复定义。
+4. **依赖注入**
+   - `sampleText`/`readPrompt` 复用 `llm.js`；`sendSessionMessage` 从 `@hana/plugin-runtime` import；`store` 由载体传递。
 
-## 五、限频与去重
+## 六、确认词与拒绝词（首版内建，可后续配置）
 
-- 插件级状态字段：`_state.lastAiWorklogAt`、`_state.lastAiWorklogSession`（仅在 index.js 实例内存，不持久化）。
-- 判定：`now - lastAiWorklogAt < WINDOW_MS`（默认 15min）且同会话 → 跳过。
-- 失败（LLM 错误/空输出）不推进水位线，用户再发「记录」可重试。
+- 确认词：`记录`、`好`、`是`、`确认`、`ok`（含中英文，忽略大小写/空白）。
+- 拒绝词：`不`、`不用`、`不要`、`算了`、`取消`、`no`。
+- 首版不区分大小写、用 startsWith/包含匹配；确认词优先于拒绝词（`记录` 既非拒绝也非歧义）。
 
-## 六、错误处理
+## 七、错误处理
 
-- `generateWorklogFromText` 内部 try/catch：LLM 失败、非 JSON、`store.update` 冲突 → 记录 `ctx.log.warn` 并返回 `{ ok: false, reason }`。
-- 不阻塞消息流（fire-and-forget），单条失败不影响插件与其它功能。
-- `readPrompt` 缺 prompt 文件时返回空串 → 视为不可用，跳过生成。
+- `generateDraft` 失败（LLM 错误/非 JSON/空输出）：不设 `_pendingDraft`，仅 log；用户再发「记录」可重试。
+- `sendSessionMessage` 失败：log；草稿保留在 `_pendingDraft`，用户下次回复仍可确认。
+- `commitDraft` 失败（store 冲突等）：log，清 `_pendingDraft`，发消息告知失败。
+- 断线/重启：`_pendingDraft` 内存态丢失（不持久化），属可接受（用户重新触发即可）。
 
-## 七、测试
+## 八、测试
 
-- 无法在本机真实调 LLM（需宿主 `@hana/plugin-runtime` 的 `sampleText`），故：
+- 本机无法真调 LLM/宿主，故：
   - `node --check` 校验新增/改动文件语法。
-  - 静态核对：新增文件被 `src-server/index.js` import；prompt 文件被 `readPrompt` 读取。
-  - 构造 `generateWorklogFromText` 的纯解析部分（LLM 输出→JSON→清洗）为可导出纯函数，便于后续单测。
-- 在宿主内实际触发（绑定会话发含「记录」消息）验证端到端。
+  - `parseDraft` 为纯函数，可用 node 单测（喂 LLM 样本 JSON → 断言清洗结果）。
+  - 静态核对：`generateDraft`/`commitDraft` 被 import；prompt 被 `readPrompt` 读到；`sendSessionMessage` 导入存在。
+- 端到端（宿主内）：绑定会话发含「记录」消息 → 看 AI 询问 → 回复「记录」→ 检查 worklog 落库）待宿主侧验证。
 
-## 八、配置（manifest）
+## 九、配置（manifest）
 
-- 新增配置项 `aiWorklogGen`（boolean，默认 true，标题"会话消息含『记录』时 AI 生成实验记录"）。
-- autoTriage 无关，本功能独立于巡检开关。
+- 新增配置项 `aiWorklogGen`（boolean，默认 true，标题"会话消息含『记录』时 AI 生成实验记录（需回复确认）"）。
+- 独立于 `autoTriage` 巡检开关。
 
-## 九、范围与取舍
+## 十、范围与取舍
 
-- 不做：聚合多条消息、AI 相似性去重（首版仅限频）、级联触发 `triageWorklog` 二次巡检（避免重复巡检）。
-- 可后续扩展：trigger 词更灵活、生成质量提升、草稿确认流。
+- 不做：把确认回复并入草稿重总结（首版仅提示确认/拒绝）、多会话并发草稿（同一时刻仅一个 `_pendingDraft`）、草稿持久化。
+- 可后续扩展：trigger 词配置、确认/拒绝词配置、多轮补全草稿。
 
-## 十、超出范围
+## 十一、超出范围
 
-- 不改变现有手动录入路径。
-- 不改变 worklog 现有数据结构（仅新增可选字段）。
+- 不改变现有手动录入路径与面板。
+- 不改变 worklog 现有数据结构（仅新增 `aiGenerated`/`sourceSession`/`generatedAt` 字段）。
 - 不引入第三方依赖。
