@@ -1,11 +1,12 @@
 /**
  * 文献源适配器
  * - zotero：本地 Zotero 7+ API（http://127.0.0.1:<port>，走 ctx.network.fetch，manifest 已声明 allowLocalhost）
- * - ima：V4.1 降级方案 C（宿主 MCP 桥接与开放 API 均不可用），本期不接入；代码骨架保留注释
  *
- * Zotero 数据只进文献库列表，不进文献分析报告（数据口径见开发文档 6.4）
+ * 实验记录中心化改造后：仅保留 Zotero 本地源（去在线检索/工作区扫描）；
+ * Zotero 镜像条目进文献库列表，同步时检测新收录并自动日志化到 worklog（appendLiteratureLog）。
  */
 import { summarizeFromFulltext, translateAbstract, extractLiteratureKeywords } from "./llm.js";
+import { appendLiteratureLog } from "./literature-log.js";
 
 const FAILED_RETRY_COOLDOWN_MS = 24 * 3600 * 1000; // E4：failed 解析 24h 冷却
 const PDF_MAX_CHARS = 100000; // E3：60k→100k 保综述/长文结论段（英文约 4.5k 字符/页，≈22 页）
@@ -566,6 +567,17 @@ export async function syncZotero(ctx, store) {
   });
   const result = store.upsertByKey("literature", "zoteroKey", merged, goneEntries);
   writeSettings(ctx, store, { zoteroLastSyncAt: store.now(), zoteroCount: items.length, zoteroSyncSkipped: false });
+
+  // 实验记录中心化：检测本次新增的 Zotero 条目（zoteroKey 未在旧库出现），自动日志化到 worklog
+  const newEntries = merged.filter((it) => !prevByKey.has(it.zoteroKey));
+  if (newEntries.length > 0 && result.ok) {
+    try {
+      appendLiteratureLog(store, newEntries, `zotero-sync-${store.now()}`);
+    } catch (err) {
+      ctx.log?.warn?.(`zotero sync log failed: ${err?.message || err}`);
+    }
+  }
+
   return { ok: true, entries: items, replaced: result.replaced, gone: goneEntries.length };
 }
 
@@ -602,7 +614,7 @@ export async function enrichCitationCounts(ctx, store, batchLimit = 5) {
 }
 
 /**
- * 全源扫描：工作区文件夹 + Zotero
+ * 文献源扫描：仅 Zotero 本地源（实验记录中心化后去除工作区/在线源）
  * 返回 { entries, warnings, sourceStats }
  */
 export async function scanAllSources(ctx, store) {
