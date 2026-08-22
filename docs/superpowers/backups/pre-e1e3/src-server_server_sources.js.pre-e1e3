@@ -1,0 +1,517 @@
+/**
+ * 文献源适配器
+ * - workspaceFolder：工作区文献目录扫描（ctx.resources，PDF/题录文件，CAJ 仅识别）
+ * - zotero：本地 Zotero 7+ API（http://127.0.0.1:<port>，走 ctx.network.fetch，manifest 已声明 allowLocalhost）
+ * - ima：V4.1 降级方案 C（宿主 MCP 桥接与开放 API 均不可用），本期不接入；代码骨架保留注释
+ *
+ * Zotero 数据只进文献库列表，不进文献分析报告（数据口径见开发文档 6.4）
+ */
+import { parseFileContent, metadataFromPdfFileName, extractPdfText, SUPPORTED_EXTENSIONS } from "./parsers.js";
+import { summarizeFromFulltext } from "./llm.js";
+
+const MAX_SCAN_DEPTH = 3;
+const MAX_FILES_PER_FOLDER = 2000;
+const CAJ_EXTENSIONS = new Set([".caj", ".kdh", ".nh", ".nhc"]);
+
+export function readSettings(ctx, store) {
+  const doc = store.read("settings");
+  return doc || { literatureFolders: [], updatedAt: null };
+}
+
+export function writeSettings(ctx, store, patch) {
+  const current = readSettings(ctx, store);
+  const next = { ...current, ...patch, updatedAt: store.now() };
+  store.write("settings", next);
+  return next;
+}
+
+function isLiteratureFile(name) {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  return SUPPORTED_EXTENSIONS.has(ext) || ext === ".pdf" || CAJ_EXTENSIONS.has(ext);
+}
+
+function isCajFile(name) {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  return CAJ_EXTENSIONS.has(ext);
+}
+
+function parseIsoDate(value) {
+  if (!value) return null;
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+/** 工作区文件夹扫描（递归，深度受限） */
+export async function scanWorkspaceFolder(ctx, folderRef, depth = 0) {
+  if (depth > MAX_SCAN_DEPTH) return [];
+  const results = [];
+  let listing;
+  try {
+    listing = await ctx.resources.list(folderRef);
+  } catch (err) {
+    return [{ error: `无法读取目录：${err.message}` }];
+  }
+  const items = listing?.items || [];
+  let files = 0;
+  for (const item of items) {
+    if (files > MAX_FILES_PER_FOLDER) break;
+    if (item.isDirectory) {
+      const childRef = childResourceRef(folderRef, item.name);
+      const nested = await scanWorkspaceFolder(ctx, childRef, depth + 1);
+      results.push(...nested);
+      continue;
+    }
+    if (!isLiteratureFile(item.name)) continue;
+    files += 1;
+    const fileRef = childResourceRef(folderRef, item.name);
+    const base = {
+      name: item.name,
+      size: item.size,
+      mtimeMs: item.mtimeMs,
+      ref: fileRef,
+    };
+    if (isCajFile(item.name)) {
+      results.push({
+        ...base,
+        unsupported: true,
+        note: "CAJ 格式暂不支持解析，仅识别列出",
+      });
+      continue;
+    }
+    const ext = item.name.slice(item.name.lastIndexOf(".")).toLowerCase();
+    if (ext === ".pdf") {
+      results.push({ ...base, pdf: true, meta: metadataFromPdfFileName(item.name) });
+      continue;
+    }
+    try {
+      const file = await ctx.resources.read(fileRef);
+      const content = Buffer.isBuffer(file?.content)
+        ? file.content.toString("utf-8")
+        : typeof file?.content === "string"
+          ? file.content
+          : "";
+      const records = parseFileContent(item.name, content);
+      for (const record of records) {
+        results.push({ ...base, record });
+      }
+    } catch (err) {
+      results.push({ ...base, error: `解析失败：${err.message}` });
+    }
+  }
+  return results;
+}
+
+function childResourceRef(parentRef, name) {
+  if (parentRef && typeof parentRef === "object") {
+    if (parentRef.kind === "local-file" && parentRef.path) {
+      return { kind: "local-file", path: `${parentRef.path.replace(/[\\/]+$/, "")}/${name}` };
+    }
+    if (parentRef.kind === "mount" && parentRef.path !== undefined) {
+      return { kind: "mount", mountId: parentRef.mountId, path: `${String(parentRef.path).replace(/[\\/]+$/, "")}/${name}` };
+    }
+    if (parentRef.kind === "resource" && parentRef.resourceId) {
+      return { kind: "resource", resourceId: parentRef.resourceId, path: name };
+    }
+  }
+  return { kind: "local-file", path: name };
+}
+
+/** probe 错误分级（A3）：区分「未运行」/「本地 API 未开启」/「网络异常」 */
+function classifyProbeError(err) {
+  const msgs = [err?.message, err?.cause?.message, err?.cause?.code, String(err || "")]
+    .filter(Boolean)
+    .join(" | ");
+  if (/ECONNREFUSED|connection refused|refused/i.test(msgs)) return "zotero_not_running";
+  if (/closed|reset|abort|timeout|timed ?out|fetch failed/i.test(msgs)) return "api_not_enabled";
+  return "network_error";
+}
+
+/** Zotero 本地 API：探测可用性（显式 UA + 错误分级） */
+export async function zoteroProbe(ctx, port) {
+  let res;
+  try {
+    res = await ctx.network.fetch(`http://127.0.0.1:${port}/api/users/0/items?limit=1&format=json`, {
+      cacheTtlMs: 0,
+      timeoutMs: 3000,
+      headers: { "User-Agent": ZOTERO_UA },
+    });
+  } catch (err) {
+    const code = classifyProbeError(err);
+    return {
+      ok: false,
+      code,
+      error:
+        code === "zotero_not_running"
+          ? "Zotero 客户端未运行，请启动桌面客户端"
+          : code === "api_not_enabled"
+            ? "本地 API 未开启或请求被拒：Zotero → 设置 → 高级 → 允许其他应用与 Zotero 通信（改后需重启 Zotero）"
+            : String(err?.message || "无法访问"),
+    };
+  }
+  if (!res.ok) {
+    if (res.status === 403 || res.status === 400) {
+      return { ok: false, code: "api_not_enabled", status: res.status, error: "本地 API 未开启或请求被拒：Zotero → 设置 → 高级 → 允许其他应用与 Zotero 通信（改后需重启 Zotero）" };
+    }
+    return { ok: false, code: "network_error", status: res.status, error: `HTTP ${res.status}` };
+  }
+  const data = await res.json().catch(() => null);
+  return { ok: true, total: data?.totalResults ?? data?.length ?? 0 };
+}
+
+const ZOTERO_ITEM_TYPES = [
+  "journalArticle",
+  "conferencePaper",
+  "preprint",
+  "book",
+  "bookSection",
+  "report",
+  "thesis",
+];
+
+/** Zotero 本地 API 显式 UA：Mozilla 前缀 UA 会被 Zotero 拒绝（实测连接被关闭），必须显式设置 */
+const ZOTERO_UA = "materials-research-copilot/0.1.0";
+
+/** Zotero fetch 封装：显式 UA + 403 兜底 zotero-allowed-request */
+async function zoteroFetch(ctx, url) {
+  const opts = {
+    cacheTtlMs: 0,
+    timeoutMs: 10000,
+    headers: { "User-Agent": ZOTERO_UA },
+  };
+  let res = await ctx.network.fetch(url, opts);
+  if (res.status === 403) {
+    res = await ctx.network.fetch(url, {
+      ...opts,
+      headers: { ...opts.headers, "zotero-allowed-request": "1" },
+    });
+  }
+  return res;
+}
+
+/** file:///D:/Zotero/storage/x.pdf → D:\Zotero\storage\x.pdf */
+function fileUrlToPath(fileUrl) {
+  if (!fileUrl || !fileUrl.startsWith("file:///")) return null;
+  try {
+    const url = new URL(fileUrl);
+    let p = decodeURIComponent(url.pathname);
+    if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);
+    return p.replace(/\//g, "\\");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Zotero 全量同步（A1）：
+ * - 去 limit（2000 兑底），一次拉全库文献类条目
+ * - meta.creatorSummary / meta.parsedDate 替代自拼 authors/year
+ * - 附件条目（links.enclosure）反查 parentItem → pdfPath
+ * - 全部标记 readOnly（A4 只读镜像）
+ */
+export async function fetchZoteroItems(ctx, port) {
+  // 注意：itemType OR 过滤是 value 用 || 连接（itemType=journalArticle||conferencePaper），
+  // 不能重复 itemType= 前缀（旧写法导致 0 条，静默降级隐藏 bug）
+  const typeFilter = ZOTERO_ITEM_TYPES.join("||");
+  const url = `http://127.0.0.1:${port}/api/users/0/items?format=json&itemType=${encodeURIComponent(typeFilter)}&limit=2000`;
+  const res = await zoteroFetch(ctx, url);
+  if (!res.ok) throw new Error(`Zotero API HTTP ${res.status}`);
+  const items = await res.json();
+
+  // 附件映射：parentItem → PDF 本地路径（失败不中断同步）
+  const pdfByParent = new Map();
+  try {
+    const attUrl = `http://127.0.0.1:${port}/api/users/0/items?format=json&itemType=attachment&limit=2000`;
+    const attRes = await zoteroFetch(ctx, attUrl);
+    if (attRes.ok) {
+      const atts = await attRes.json();
+      for (const a of atts) {
+        const href = a?.links?.enclosure?.href;
+        if (!href) continue;
+        const p = fileUrlToPath(href);
+        const parent = a?.data?.parentItem;
+        if (parent && p && !pdfByParent.has(parent)) pdfByParent.set(parent, p);
+      }
+    }
+  } catch {
+    // 附件映射失败不中断同步
+  }
+
+  const entries = [];
+  for (const item of items) {
+    if (item?.data?.itemType === "attachment" || item?.data?.itemType === "note") continue;
+    const d = item?.data || {};
+    const title = String(d.title || "").trim();
+    if (!title) continue;
+    const parsedDate = item?.meta?.parsedDate;
+    entries.push({
+      title,
+      authors: (d.creators || [])
+        .map((c) => [c.firstName, c.lastName].filter(Boolean).join(" "))
+        .filter(Boolean),
+      authorSummary: item?.meta?.creatorSummary || null,
+      year: typeof parsedDate === "string" && parsedDate ? parsedDate.slice(0, 4) : d.date ? String(d.date).slice(0, 4) : null,
+      venue: d.publicationTitle || d.bookTitle || d.publisher || null,
+      doi: d.DOI || null,
+      url: d.url || (d.DOI ? `https://doi.org/${d.DOI}` : null),
+      abstract: String(d.abstractNote || "").trim(),
+      keywords: (d.tags || []).map((t) => t.tag || "").filter(Boolean),
+      source: "zotero",
+      sourceApi: "zotero",
+      zoteroKey: item.key || null,
+      citationCount: null,
+      readOnly: true,
+      pdfPath: pdfByParent.get(item.key) || null,
+      // D1：条目所属 collection（Zotero 9.x key 数组，悬空引用在 UI 归「未分类」）
+      collectionKeys: Array.isArray(d.collections) ? d.collections.filter(Boolean) : [],
+    });
+  }
+  return entries;
+}
+
+/**
+ * D1：拉取 Zotero collection 映射（key → {name, parentCollection}）
+ * 用于 UI 左侧分类树展示与「未分类」兜底。
+ * 实测：collections 端点返回 key/name/parentCollection 字段，全量拉取无分页负担。
+ */
+export async function fetchZoteroCollections(ctx, port) {
+  const url = `http://127.0.0.1:${port}/api/users/0/collections?format=json&limit=2000`;
+  let data = [];
+  try {
+    const res = await zoteroFetch(ctx, url);
+    if (!res.ok) return [];
+    data = await res.json();
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(data)) return [];
+  return data
+    .map((c) => ({
+      key: c?.key || null,
+      name: String(c?.data?.name || "").trim() || null,
+      parentCollection: c?.data?.parentCollection || null,
+    }))
+    .filter((c) => c.key && c.name);
+}
+
+/** 指纹：doi 小写 || title 小写（与 store.append 口径一致） */
+function fingerprintsOf(entry) {
+  const fps = [];
+  if (typeof entry.doi === "string" && entry.doi.trim()) fps.push(`doi=${entry.doi.trim().toLowerCase()}`);
+  if (typeof entry.title === "string" && entry.title.trim()) fps.push(`title=${entry.title.trim().toLowerCase()}`);
+  return fps;
+}
+
+/**
+ * 去重优先级反转（A1）：同一 DOI/标题冲突时 Zotero 条目优先存活
+ * （用户知识库可信度高于 online/workspace 自动搜集条目）
+ */
+export function dedupeZoteroPriority(entries) {
+  const seen = new Map();
+  const order = [];
+  for (const e of entries) {
+    const fps = fingerprintsOf(e);
+    if (fps.length === 0) {
+      order.push(e);
+      continue;
+    }
+    let conflict = null;
+    for (const fp of fps) {
+      if (seen.has(fp)) {
+        conflict = seen.get(fp);
+        break;
+      }
+    }
+    if (!conflict) {
+      for (const fp of fps) seen.set(fp, e);
+      order.push(e);
+      continue;
+    }
+    // 冲突：Zotero 赢。已有是 zotero 则丢弃新条目；新条目是 zotero 则原位替换
+    if (e.source === "zotero" && conflict.source !== "zotero") {
+      const idx = order.indexOf(conflict);
+      order[idx] = e;
+      for (const fp of fps) seen.set(fp, e);
+    }
+  }
+  return order;
+}
+
+/**
+ * C3：Zotero PDF 全文增强（异步，不阻塞主同步）
+ * - 对 source=zotero 且带 pdfPath 的条目解析 PDF 文本，标记 fullTextParsed
+ *   （"ok"=已解析 / "scan"=扫描版需人工补全 / "failed"=解析失败不重试）
+ * - abstract 为空时对前 SUMMARY_LIMIT 篇生成 AI 摘要（abstractSource: "fulltext"）
+ * 返回处理的条目数；任何失败不影响主同步。
+ */
+export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, summaryLimit = 3) {
+  const doc = store.read("literature");
+  const targets = (doc.entries || []).filter(
+    (e) => e.source === "zotero" && e.pdfPath && (!e.fullTextParsed || e.fullTextParsed === "failed")
+  );
+  if (targets.length === 0) return { processed: 0, summaries: 0 };
+
+  const batch = targets.slice(0, batchLimit);
+  let summaries = 0;
+  for (const entry of batch) {
+    try {
+      const file = await ctx.resources.read({ kind: "local-file", path: entry.pdfPath });
+      const buf = file?.content;
+      if (!Buffer.isBuffer(buf)) {
+        store.update("literature", undefined, (cur) => ({
+          entries: (cur.entries || []).map((e) =>
+            e.zoteroKey === entry.zoteroKey ? { ...e, fullTextParsed: "failed" } : e
+          ),
+        }));
+        continue;
+      }
+      const parsed = await extractPdfText(buf);
+      if (!parsed.ok) {
+        store.update("literature", undefined, (cur) => ({
+          entries: (cur.entries || []).map((e) =>
+            e.zoteroKey === entry.zoteroKey ? { ...e, fullTextParsed: "failed" } : e
+          ),
+        }));
+        continue;
+      }
+      const patch = parsed.scan
+        ? { fullTextParsed: "scan" }
+        : { fullTextParsed: "ok", fullText: parsed.text.slice(0, 60000) };
+      // AI 摘要：abstract 空且文本可用（每批最多 summaryLimit 篇）
+      if (!parsed.scan && !String(entry.abstract || "").trim() && summaries < summaryLimit) {
+        try {
+          const summary = await summarizeFromFulltext(ctx, entry, parsed.text.slice(0, 30000));
+          if (summary) {
+            patch.abstract = summary;
+            patch.abstractSource = "fulltext";
+            summaries += 1;
+          }
+        } catch {}
+      }
+      store.update("literature", undefined, (cur) => ({
+        entries: (cur.entries || []).map((e) =>
+          e.zoteroKey === entry.zoteroKey ? { ...e, ...patch } : e
+        ),
+      }));
+    } catch (err) {
+      try {
+        store.update("literature", undefined, (cur) => ({
+          entries: (cur.entries || []).map((e) =>
+            e.zoteroKey === entry.zoteroKey ? { ...e, fullTextParsed: "failed" } : e
+          ),
+        }));
+      } catch {}
+    }
+  }
+  return { processed: batch.length, summaries };
+}
+
+/**
+ * Zotero 全量镜像同步（A1）：探测 → 全量拉取 → 镜像替换 → 水位线
+ * 供 scanAllSources 与 index.js 同步定时器复用
+ */
+export async function syncZotero(ctx, store) {
+  const zoteroPort = ctx.config.get?.("zoteroPort") ?? 23119;
+  const probe = await zoteroProbe(ctx, zoteroPort);
+  if (!probe.ok) {
+    return { ok: false, error: probe.error, code: probe.code, entries: [] };
+  }
+  const items = await fetchZoteroItems(ctx, zoteroPort);
+  // D1：刷新 Zotero collection 映射（key/name/parentCollection），写入 collections 存储
+  const collections = await fetchZoteroCollections(ctx, zoteroPort);
+  try {
+    const cur = store.read("collections");
+    store.update("collections", cur.version, () => ({ collections }));
+  } catch { /* collection 映射写入失败不影响文献同步 */ }
+  // C3：镜像替换时保留旧条目的 PDF 增强字段（fullText/fullTextParsed/AI 摘要），避免每次同步丢失重解析
+  const prev = store.read("literature");
+  const prevByKey = new Map(
+    (prev.entries || []).filter((e) => e.zoteroKey).map((e) => [e.zoteroKey, e])
+  );
+  const merged = items.map((it) => {
+    const old = prevByKey.get(it.zoteroKey);
+    if (!old) return it;
+    const patch = {};
+    // 失败项不合并（下次同步重试）；成功/扫描标记保留避免重复解析
+    if (old.fullTextParsed && old.fullTextParsed !== "failed") patch.fullTextParsed = old.fullTextParsed;
+    if (old.fullText) patch.fullText = old.fullText;
+    if (old.abstractSource === "fulltext" && old.abstract) {
+      patch.abstract = old.abstract;
+      patch.abstractSource = "fulltext";
+    }
+    return { ...it, ...patch };
+  });
+  const result = store.upsertByKey("literature", "zoteroKey", merged);
+  writeSettings(ctx, store, { zoteroLastSyncAt: store.now(), zoteroCount: items.length });
+  return { ok: true, entries: items, replaced: result.replaced };
+}
+
+/**
+ * 全源扫描：工作区文件夹 + Zotero
+ * 返回 { entries, warnings, sourceStats }
+ */
+export async function scanAllSources(ctx, store) {
+  const entries = [];
+  const warnings = [];
+  const sourceStats = { workspaceFolder: 0, zotero: 0 };
+  const settings = readSettings(ctx, store);
+
+  // 1. 工作区文件夹
+  for (const folder of settings.literatureFolders || []) {
+    const folderRef = folder.ref || (folder.path ? { kind: "local-file", path: folder.path } : null);
+    if (!folderRef) continue;
+    const found = await scanWorkspaceFolder(ctx, folderRef);
+    let added = 0;
+    for (const item of found) {
+      if (item.error || item.unsupported) {
+        warnings.push(`${item.name || folder.label}: ${item.error || item.note}`);
+        continue;
+      }
+      if (item.record) {
+        entries.push({
+          ...item.record,
+          source: "workspace",
+          sourceApi: "workspace",
+          fileName: item.name,
+          ref: item.ref,
+        });
+        added += 1;
+      } else if (item.pdf) {
+        entries.push({
+          title: item.meta.title,
+          year: item.meta.year,
+          authors: [],
+          venue: "",
+          doi: null,
+          url: null,
+          abstract: "",
+          keywords: [],
+          source: "workspace",
+          sourceApi: "workspace",
+          fileName: item.name,
+          ref: item.ref,
+        });
+        added += 1;
+      }
+    }
+    sourceStats.workspaceFolder += added;
+  }
+
+  // 2. Zotero：全量镜像（探测失败优雅降级，不影响其他来源）
+  const sync = await syncZotero(ctx, store);
+  if (sync.ok) {
+    entries.push(...sync.entries);
+    sourceStats.zotero += sync.entries.length;
+  } else {
+    warnings.push(`Zotero 未连接（${sync.code || sync.error || "无法访问"}），可从 Zotero 导出 CSL JSON/RIS 到文献目录替代`);
+  }
+
+  // 3. 最终去重（Zotero 优先存活）
+  const deduped = dedupeZoteroPriority(entries);
+  const dropped = entries.length - deduped.length;
+  if (dropped > 0) warnings.push(`去重丢弃 ${dropped} 条重复（Zotero 优先存活）`);
+
+  return { entries: deduped, warnings, sourceStats };
+}

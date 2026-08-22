@@ -1,0 +1,29 @@
+{
+  "name": "materials-research-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hana/plugin-components": "file:../openhanako/packages/plugin-components",
+    "@hana/plugin-protocol": "file:../openhanako/packages/plugin-protocol",
+    "@hana/plugin-runtime": "file:../openhanako/packages/plugin-runtime",
+    "@hana/plugin-sdk": "file:../openhanako/packages/plugin-sdk",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "scripts": {
+    "build:ui": "vite build",
+    "build:server": "esbuild src-server/index.js src-server/tools/*.js src-server/routes/*.js --bundle --format=esm --platform=node --outbase=src-server --outdir=. --log-level=warning --external:fs --external:http --external:https --external:url",
+    "build": "npm run build:server && npm run build:ui",
+    "test": "node tests/run-all.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

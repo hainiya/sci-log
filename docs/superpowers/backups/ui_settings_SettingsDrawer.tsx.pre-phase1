@@ -1,0 +1,174 @@
+import { useEffect, useState } from 'react';
+import { api, hana } from '../api';
+
+type Props = {
+  state: any;
+  onClose: () => void;
+  onStateChange: () => Promise<void>;
+  showToast: (msg: string) => void;
+};
+
+export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Props) {
+  const [folders, setFolders] = useState<any[]>([]);
+  const [binding, setBinding] = useState<any>(null);
+  const [rejected, setRejected] = useState<any[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [zotero, setZotero] = useState<any>(null);
+  const [probing, setProbing] = useState(false);
+
+  const loadZotero = () => {
+    api.getZoteroStatus().then(setZotero).catch(() => {});
+  };
+
+  useEffect(() => {
+    api.getFolders().then((r) => setFolders(r.folders || [])).catch(() => {});
+    api.getBinding().then(setBinding).catch(() => {});
+    api.getRejected().then((r) => setRejected(r.entries || [])).catch(() => {});
+    loadZotero();
+  }, []);
+
+  const reprobeZotero = async () => {
+    setProbing(true);
+    try {
+      setZotero(await api.reprobeZotero());
+    } catch (err: any) {
+      showToast(`探测失败：${err.message}`);
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  const pickFolder = async () => {
+    setPicking(true);
+    try {
+      const result = await hana.resources.pick({ mode: 'directory' } as any);
+      const ref = (result as any)?.resource || (result as any)?.ref;
+      if (!ref) return;
+      const label = (ref as any)?.path || (ref as any)?.name || '文献目录';
+      await api.addFolder({ ref, label, addedAt: new Date().toISOString() });
+      setFolders((await api.getFolders()).folders || []);
+      showToast('文献目录已添加，扫描时会自动收集 PDF/题录文件');
+    } catch (err: any) {
+      showToast(`选择目录失败：${err.message}`);
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  const removeFolder = async (key: string) => {
+    await api.removeFolder(key);
+    setFolders((await api.getFolders()).folders || []);
+  };
+
+  const bindCurrent = async () => {
+    const sessionId = state?.sessionId;
+    if (!sessionId) {
+      showToast('当前面板未能获取会话标识，请在对话中让助手执行 manage_plan 等操作完成绑定');
+      return;
+    }
+    try {
+      await api.bind(sessionId, null);
+      setBinding(await api.getBinding());
+      showToast('已绑定当前会话');
+    } catch (err: any) {
+      showToast(`绑定失败：${err.message}`);
+    }
+  };
+
+  const unbind = async () => {
+    await api.unbind();
+    setBinding(await api.getBinding());
+    showToast('已解除绑定');
+  };
+
+  const clearRejected = async () => {
+    await api.clearRejected();
+    setRejected([]);
+    showToast('拒绝记录已清空');
+    await onStateChange();
+  };
+
+  const copyExportHint = async () => {
+    await hana.clipboard.writeText('导出文献分析报告');
+    showToast('已复制：在对话中发送即可导出');
+  };
+
+  return (
+    <div className="mrc-drawer-mask" onClick={onClose}>
+      <div className="mrc-drawer" onClick={(e) => e.stopPropagation()}>
+        <div className="mrc-drawer-head">
+          <span>⚙️ 设置</span>
+          <button className="mrc-btn small" onClick={onClose}>✕</button>
+        </div>
+
+        <section className="mrc-drawer-section">
+          <h4>📁 工作区文献库文件夹</h4>
+          <p className="mrc-drawer-hint">工作区文献是文献库的默认来源：选择工作区中存放文献的文件夹（PDF / RIS / BibTeX / EndNote / CAJ），扫描与自动监听会将其入库，无需再切分类。选择后请点击「🔄 扫描文献」完成首次收集。</p>
+          <button className="mrc-btn" onClick={pickFolder} disabled={picking}>{picking ? '选择中…' : '➕ 添加文献目录'}</button>
+          {folders.length === 0 && <div className="mrc-empty">尚未配置文献文件夹（插件无法自动探测工作台路径，请手动选择一次）</div>}
+          {folders.map((folder) => {
+            const key = folder.ref?.path || folder.path || folder.label || '';
+            return (
+              <div key={key} className="mrc-folder-row">
+                <span title={key}>📂 {folder.label || key}</span>
+                <button className="mrc-btn small danger" onClick={() => removeFolder(key)}>移除</button>
+              </div>
+            );
+          })}
+        </section>
+
+        <section className="mrc-drawer-section">
+          <h4>📚 Zotero 连接</h4>
+          <p className="mrc-drawer-hint">Zotero 本地库以只读镜像同步进文献库，分析报告会纳入 Zotero 条目。</p>
+          {zotero?.ok ? (
+            <div className="mrc-folder-row">
+              <span>🟢 已连接（{zotero.total ?? 0} 条）</span>
+            </div>
+          ) : (
+            <div className="mrc-folder-row">
+              <span className="mrc-zotero-error">🔴 未连接：{zotero?.error || '未知状态'}</span>
+            </div>
+          )}
+          <button className="mrc-btn small" onClick={reprobeZotero} disabled={probing}>{probing ? '探测中…' : '重试探测'}</button>
+        </section>
+
+        <section className="mrc-drawer-section">
+          <h4>🔗 会话绑定管理</h4>
+          <p className="mrc-drawer-hint">绑定后，lifecycle 会监听该会话的研究方向讨论并自动搜集文献（受 autoCollectEnabled 开关控制）。</p>
+          {binding?.sessionId ? (
+            <div className="mrc-folder-row">
+              <span>已绑定：{binding.sessionId.slice(0, 18)}…（{binding.source === 'auto' ? '自动' : '手动'}，{binding.boundAt ? new Date(binding.boundAt).toLocaleString('zh-CN') : ''}）</span>
+              <button className="mrc-btn small danger" onClick={unbind}>解除绑定</button>
+            </div>
+          ) : (
+            <div className="mrc-folder-row">
+              <span>未绑定会话</span>
+              <button className="mrc-btn" onClick={bindCurrent}>绑定当前会话</button>
+            </div>
+          )}
+        </section>
+
+        <section className="mrc-drawer-section">
+          <h4>🚫 拒绝记录（{rejected.length}）</h4>
+          <p className="mrc-drawer-hint">AI 生成提案/建议时会参考最近 5 条拒绝记录，避免重复提议。</p>
+          {rejected.length === 0 && <div className="mrc-empty">暂无拒绝记录</div>}
+          {rejected.slice(-5).reverse().map((r) => (
+            <div key={r.id} className="mrc-rejected-row">
+              <div className="mrc-rejected-summary">{r.summary}</div>
+              <div className="mrc-rejected-reason">理由：{r.reason}</div>
+            </div>
+          ))}
+          {rejected.length > 0 && (
+            <button className="mrc-btn small danger" onClick={clearRejected}>清空拒绝记录</button>
+          )}
+        </section>
+
+        <section className="mrc-drawer-section">
+          <h4>📤 导出</h4>
+          <p className="mrc-drawer-hint">面板导出依赖当前会话上下文；若导出按钮不可用，可在对话中说「导出审查报告 / 导出文献分析报告 / 导出 BibTeX / 导出实验记录」。</p>
+          <button className="mrc-btn" onClick={copyExportHint}>复制导出指令</button>
+        </section>
+      </div>
+    </div>
+  );
+}

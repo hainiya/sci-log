@@ -1,0 +1,336 @@
+/**
+ * 面板数据 API（routes/api.js，挂载前缀 /api）
+ * - 读写 + 乐观锁 + api/changes 增量接口（面板轮询）
+ * - 设置抽屉：文献目录管理 / 会话绑定管理 / 拒绝记录清空
+ * - 文献扫描与报告刷新
+ */
+import { createStore } from "../server/store.js";
+import { createProposal } from "../server/proposals.js";
+import { readSettings, writeSettings, scanAllSources, zoteroProbe } from "../server/sources.js";
+import { analyzeLiterature, extractKeywords } from "../server/llm.js";
+
+const WRITABLE = new Set(["plan", "gantt", "calendar", "worklog", "literature"]);
+
+export default function registerApiRoutes(app, ctx) {
+  const store = createStore(ctx.dataDir);
+
+  const sessionIdOf = (c) => {
+    const header = c.req.header("x-hana-plugin-surface-session");
+    if (header && header.trim()) return header.trim();
+    return c.req.query("sessionId") || null;
+  };
+
+  const sessionPathOf = (c) => c.req.query("sessionPath") || null;
+
+  // ── 全量状态 ──────────────────────────────────────────────
+  app.get("/state", (c) => {
+    const state = {};
+    for (const name of ["binding", "plan", "gantt", "calendar", "literature", "worklog", "reviews", "rejected", "settings"]) {
+      state[name] = store.read(name);
+    }
+    state.updates = store.getUpdates();
+    state.config = {
+      autoCollectEnabled: ctx.config.get?.("autoCollectEnabled") ?? true,
+      autoApproveLiterature: ctx.config.get?.("autoApproveLiterature") ?? true,
+      zoteroPort: ctx.config.get?.("zoteroPort") ?? 23119,
+    };
+    state.sessionId = sessionIdOf(c);
+    return c.json(state);
+  });
+
+  // ── 增量水位线（面板轮询） ───────────────────────────────
+  app.get("/changes", (c) => {
+    const sinceRaw = c.req.query("since");
+    let since = {};
+    if (sinceRaw) {
+      try {
+        since = JSON.parse(sinceRaw);
+      } catch {}
+    }
+    const updates = store.getUpdates();
+    const changed = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if ((since[key] || 0) !== value) changed[key] = value;
+    }
+    return c.json({ changed, updates });
+  });
+
+  // ── 通用读写（乐观锁） ────────────────────────────────────
+  for (const name of WRITABLE) {
+    app.get(`/${name}`, (c) => c.json(store.read(name)));
+
+    app.put(`/${name}`, async (c) => {
+      let body;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "invalid_json" }, 400);
+      }
+      const { version, data } = body || {};
+      if (data === undefined) {
+        return c.json({ error: "missing_data" }, 400);
+      }
+      // A4：Zotero 镜像条目只读（提交中镜像条目集合与库中不一致 → 拒绝）
+      if (name === "literature" && Array.isArray(data?.entries)) {
+        const current = store.read("literature");
+        const curKeys = new Set((current.entries || []).filter((e) => e.readOnly).map((e) => e.zoteroKey));
+        const newKeys = new Set(data.entries.filter((e) => e.readOnly).map((e) => e.zoteroKey));
+        const mirrorTouched =
+          curKeys.size !== newKeys.size || [...curKeys].some((k) => !newKeys.has(k));
+        if (mirrorTouched) {
+          return c.json({ error: "readonly_source", message: "Zotero 镜像条目为只读，请在 Zotero 中修改后同步（或删除本地镜像）" }, 400);
+        }
+      }
+      const result = store.update(name, version, () => data);
+      if (!result.ok) {
+        return c.json({ error: "version_conflict", data: result.data }, 409);
+      }
+      return c.json({ ok: true, data: result.data });
+    });
+  }
+
+  // ── literature 追加式（在线/扫描入库共用） ────────────────
+  app.post("/literature/append", async (c) => {
+    let body;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid_json" }, 400);
+    }
+    const items = Array.isArray(body?.entries) ? body.entries : [];
+    if (items.length === 0) return c.json({ ok: true, appended: 0 });
+    const result = store.append("literature", items);
+    return c.json({ ok: true, appended: result.appended, data: result.data });
+  });
+
+  // ── 报告 ──────────────────────────────────────────────────
+  app.get("/reviews", (c) => c.json(store.read("reviews")));
+
+  app.get("/report", (c) => c.json(store.read("report")));
+
+  /** 显式触发文献分析报告（首屏不自动调 LLM，必须用户动作触发） */
+  app.post("/report/refresh", async (c) => {
+    try {
+      const literature = store.read("literature");
+      // A2：Zotero 与在线/工作区条目共同进分析；信息不全条目由 prompt 标注待补全
+      const forAnalysis = {
+        ...literature,
+        entries: literature.entries || [],
+      };
+      const plan = store.read("plan");
+      const report = await analyzeLiterature(ctx, forAnalysis, plan);
+      store.write("report", { version: 0, content: report, updatedAt: store.now() });
+      store.bump("report");
+      return c.json({ ok: true, report });
+    } catch (err) {
+      ctx.log.error("report refresh failed:", err.message);
+      return c.json({ error: "report_failed", detail: err.message }, 500);
+    }
+  });
+
+  // ── 文献扫描（手动） ──────────────────────────────────────
+  app.post("/scan", async (c) => {
+    try {
+      const { entries, warnings, sourceStats } = await scanAllSources(ctx, store);
+      const enriched = entries.map((e, index) => ({
+        id: `lit_scan_${Date.now().toString(36)}_${index}`,
+        addedAt: store.now(),
+        status: "new",
+        ...e,
+      }));
+      // 入库走追加式（自动扫描按 autoApproveLiterature 决定是否直入）
+      const autoApprove = ctx.config.get?.("autoApproveLiterature") ?? true;
+      let appended = 0;
+      if (autoApprove) {
+        const result = store.append("literature", enriched);
+        appended = result.appended;
+      } else {
+        // 生成批量提案（面板逐个确认）
+        for (const entry of enriched) {
+          createProposal(store, {
+            target: "literature",
+            action: "create",
+            diff: entry,
+            reason: `扫描到新文献：${entry.title}`,
+          });
+        }
+      }
+      return c.json({
+        ok: true,
+        found: entries.length,
+        appended,
+        pendingProposals: autoApprove ? 0 : enriched.length,
+        warnings,
+        sourceStats,
+      });
+    } catch (err) {
+      ctx.log.error("scan failed:", err.message);
+      return c.json({ error: "scan_failed", detail: err.message }, 500);
+    }
+  });
+
+  // ── Zotero 状态探测（面板标注用，5 分钟节流） ─────────────────
+  let zoteroProbeCache = { at: 0, result: null };
+  app.get("/sources/zotero", async (c) => {
+    const port = ctx.config.get?.("zoteroPort") ?? 23119;
+    const now = Date.now();
+    if (zoteroProbeCache.result && now - zoteroProbeCache.at < 5 * 60 * 1000) {
+      return c.json({ port, ...zoteroProbeCache.result });
+    }
+    const probe = await zoteroProbe(ctx, port);
+    zoteroProbeCache = { at: now, result: probe };
+    return c.json({ port, ...probe });
+  });
+
+  // 手动重试探测（绕过节流缓存）
+  app.post("/sources/zotero/probe", async (c) => {
+    const port = ctx.config.get?.("zoteroPort") ?? 23119;
+    const probe = await zoteroProbe(ctx, port);
+    zoteroProbeCache = { at: Date.now(), result: probe };
+    return c.json({ port, ...probe });
+  });
+
+  // ── 临时探测：宿主能否读取 Zotero storage 本地 PDF（C3 前置验证） ──
+  app.get("/debug/zpdf", async (c) => {
+    try {
+      const root = { kind: "local-file", path: "D:\\Zotero\\storage" };
+      const listing = await ctx.resources.list(root);
+      const dirs = (listing?.items || []).filter((i) => i.isDirectory).slice(0, 3);
+      const out = { rootOk: true, dirCount: listing?.items?.length || 0, dirs: [] };
+      for (const d of dirs) {
+        const sub = await ctx.resources.list({ kind: "local-file", path: `D:\\Zotero\\storage\\${d.name}` });
+        const pdfs = (sub?.items || []).filter((i) => i.name.toLowerCase().endsWith(".pdf")).map((i) => i.name);
+        const row = { dir: d.name, pdfs };
+        if (pdfs.length > 0) {
+          try {
+            const file = await ctx.resources.read({ kind: "local-file", path: `D:\\Zotero\\storage\\${d.name}\\${pdfs[0]}` });
+            const buf = file?.content;
+            row.read = {
+              ok: true,
+              bytes: Buffer.isBuffer(buf) ? buf.length : String(buf || "").length,
+              head: Buffer.isBuffer(buf) ? buf.subarray(0, 8).toString("latin1") : String(buf || "").slice(0, 40),
+            };
+          } catch (err) {
+            row.read = { ok: false, error: err.message };
+          }
+        }
+        out.dirs.push(row);
+      }
+      return c.json(out);
+    } catch (err) {
+      return c.json({ ok: false, error: err.message });
+    }
+  });
+
+  // ── 设置抽屉：文献目录管理 ────────────────────────────────
+  app.get("/settings/folders", (c) => {
+    const settings = readSettings(ctx, store);
+    return c.json({ folders: settings.literatureFolders || [] });
+  });
+
+  app.post("/settings/folders", async (c) => {
+    let body;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid_json" }, 400);
+    }
+    const folder = body?.folder;
+    if (!folder || typeof folder !== "object") {
+      return c.json({ error: "missing_folder" }, 400);
+    }
+    const settings = readSettings(ctx, store);
+    const folders = settings.literatureFolders || [];
+    const key = folder.ref?.path || folder.path || folder.label;
+    if (folders.some((f) => (f.ref?.path || f.path || f.label) === key)) {
+      return c.json({ ok: true, folders });
+    }
+    const next = [...folders, { ...folder, addedAt: store.now() }];
+    writeSettings(ctx, store, { literatureFolders: next });
+    return c.json({ ok: true, folders: next });
+  });
+
+  app.delete("/settings/folders", async (c) => {
+    let body;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid_json" }, 400);
+    }
+    const key = body?.key;
+    if (!key) return c.json({ error: "missing_key" }, 400);
+    const settings = readSettings(ctx, store);
+    const folders = (settings.literatureFolders || []).filter(
+      (f) => (f.ref?.path || f.path || f.label) !== key
+    );
+    writeSettings(ctx, store, { literatureFolders: folders });
+    return c.json({ ok: true, folders });
+  });
+
+  // ── 设置抽屉：会话绑定管理 ────────────────────────────────
+  app.get("/binding", (c) => c.json(store.read("binding")));
+
+  app.post("/binding", async (c) => {
+    let body;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid_json" }, 400);
+    }
+    const { sessionId, sessionPath, source = "manual" } = body || {};
+    if (!sessionId) {
+      return c.json({ error: "missing_sessionId" }, 400);
+    }
+    const current = store.read("binding");
+    const next = {
+      sessionId,
+      sessionPath: sessionPath || null,
+      boundAt: store.now(),
+      source,
+    };
+    store.write("binding", next);
+    // 通知 lifecycle 刷新订阅（宿主事件：plugin bus emit 自定义事件）
+    try {
+      ctx.appEvents.emit("binding-changed", { sessionId });
+    } catch {}
+    return c.json({ ok: true, binding: next, previous: current });
+  });
+
+  app.delete("/binding", (c) => {
+    const current = store.read("binding");
+    store.write("binding", {
+      sessionId: null,
+      sessionPath: null,
+      boundAt: null,
+      source: null,
+    });
+    try {
+      ctx.appEvents.emit("binding-changed", { sessionId: null });
+    } catch {}
+    return c.json({ ok: true, previous: current });
+  });
+
+  // ── 设置抽屉：拒绝记录 ────────────────────────────────────
+  app.get("/rejected", (c) => c.json(store.read("rejected")));
+
+  app.post("/rejected/clear", (c) => {
+    store.write("rejected", { version: 0, entries: [], updatedAt: store.now() });
+    store.bump("rejected");
+    return c.json({ ok: true });
+  });
+
+  // ── 快照/回退 ─────────────────────────────────────────────
+  app.get("/snapshots/:name", (c) => {
+    const name = c.req.param("name");
+    if (!WRITABLE.has(name)) return c.json({ error: "invalid_target" }, 400);
+    return c.json({ snapshots: store.listSnapshots(name) });
+  });
+
+  app.post("/snapshots/:name/rollback", (c) => {
+    const name = c.req.param("name");
+    if (!WRITABLE.has(name)) return c.json({ error: "invalid_target" }, 400);
+    const result = store.rollback(name);
+    if (!result.ok) return c.json({ error: result.error }, 400);
+    return c.json({ ok: true, data: result.data });
+  });
+}

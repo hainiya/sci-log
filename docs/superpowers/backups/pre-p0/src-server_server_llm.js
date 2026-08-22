@@ -1,0 +1,617 @@
+/**
+ * LLM 封装层：sampleText 等价调用 + prompt 组装
+ * sampleText 宿主通道：bus.request('model:sample-text', { messages, ... })
+ */
+import fs from "node:fs";
+import path from "node:path";
+
+const DEFAULT_TIMEOUT = 120000;
+
+/**
+ * D2 并发信号量：限制同时进行的核心 LLM 调用数。
+ * 自动搜集 / 报告 / 审查 / PDF 摘要共享同一信号量，避免同窗口多路调用互相挤压导致 LLM_TIMEOUT。
+ */
+class Semaphore {
+  constructor(limit) {
+    this.limit = limit;
+    this.active = 0;
+    this.queue = [];
+  }
+  acquire() {
+    if (this.active < this.limit) {
+      this.active += 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => this.queue.push(resolve));
+  }
+  release() {
+    this.active = Math.max(0, this.active - 1);
+    if (this.queue.length > 0 && this.active < this.limit) {
+      this.active += 1;
+      this.queue.shift()();
+    }
+  }
+}
+const LLM_SEM = new Semaphore(2);
+
+function estimateTokens(messages) {
+  let chars = 0;
+  for (const m of messages || []) {
+    chars += typeof m?.content === "string" ? m.content.length : 0;
+  }
+  return Math.ceil(chars / 4); // 粗估：4 字符 ≈ 1 token
+}
+
+function isTimeoutError(err) {
+  return /timeout/i.test(err?.message || err?.cause?.message || err?.code || String(err));
+}
+
+export async function sampleText(ctx, input) {
+  if (!ctx?.bus?.request) {
+    throw new Error("plugin bus request unavailable");
+  }
+  const callPoint = input.callPoint || "sampleText";
+  const critical = Boolean(input.critical);
+  // D2 超时分层：关键路径（报告/审查）放宽到 200s 且失败重试一次；非关键路径默认 120s 不重试
+  const timeoutMs = input.timeoutMs ?? (critical ? 200000 : DEFAULT_TIMEOUT);
+  const maxAttempts = critical ? 2 : 1;
+  const inputSize = estimateTokens(input.messages);
+  let lastErr;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await LLM_SEM.acquire();
+    try {
+      const result = await ctx.bus.request(
+        "model:sample-text",
+        {
+          messages: input.messages,
+          maxTokens: input.maxTokens ?? 1200,
+          temperature: input.temperature ?? 0.4,
+          ...(ctx.pluginId ? { pluginId: ctx.pluginId } : {}),
+        },
+        { timeout: timeoutMs }
+      );
+      return result;
+    } catch (err) {
+      lastErr = err;
+      if (isTimeoutError(err)) {
+        ctx?.log?.warn(`LLM_TIMEOUT [${callPoint}] attempt ${attempt + 1}/${maxAttempts} input≈${inputSize}tok, timeout=${timeoutMs}ms`);
+        if (attempt < maxAttempts - 1) continue; // 重试一次
+        ctx?.log?.warn(`LLM_TIMEOUT [${callPoint}] 重试后仍超时，放弃`);
+      } else {
+        ctx?.log?.warn(`LLM error [${callPoint}]: ${err?.message || String(err)}`);
+      }
+      throw err;
+    } finally {
+      LLM_SEM.release();
+    }
+  }
+  throw lastErr || new Error("LLM call failed");
+}
+
+function readPrompt(ctx, name) {
+  try {
+    return fs.readFileSync(path.join(ctx.pluginDir, "prompts", name), "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+/** 从用户消息提取检索关键词（文献自动搜集用） */
+export async function extractKeywords(ctx, text) {
+  const base = readPrompt(ctx, "keyword-extractor.md");
+  const result = await sampleText(ctx, {
+    messages: [
+      { role: "system", content: base },
+      { role: "user", content: text },
+    ],
+    maxTokens: 200,
+    temperature: 0.2,
+  });
+  const raw = String(result?.text || "").trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((k) => String(k).trim()).filter(Boolean);
+  } catch {}
+  return raw
+    .split(/[,，;；\n]/)
+    .map((k) => k.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+/**
+ * B1 三路采样（替代 slice 截断）：
+ * 路1 最新 30 条 + 路2 citationCount 最高 30 条 + 路3 与方案关键词相关度最高 20 条，
+ * 指纹去重（doi/title 小写）后补足到 ~80 条（按时间兜底填充）。
+ */
+export function sampleLiterature(entries, planText = "") {
+  const list = Array.isArray(entries) ? entries : [];
+  if (list.length <= 80) return list;
+
+  const fingerprint = (e) => {
+    if (typeof e.doi === "string" && e.doi.trim()) return `doi=${e.doi.trim().toLowerCase()}`;
+    if (typeof e.title === "string" && e.title.trim()) return `title=${e.title.trim().toLowerCase()}`;
+    return `idx=${list.indexOf(e)}`;
+  };
+  const seen = new Set();
+  const result = [];
+  const push = (e) => {
+    const fp = fingerprint(e);
+    if (seen.has(fp)) return false;
+    seen.add(fp);
+    result.push(e);
+    return true;
+  };
+
+  const timeKey = (e) =>
+    e.addedAt ? Date.parse(e.addedAt) || 0 : e.year ? Date.parse(String(e.year)) || 0 : 0;
+
+  // 路1：最新 30（按 addedAt/年份倒序）
+  const byTime = [...list].sort((a, b) => timeKey(b) - timeKey(a));
+  for (const e of byTime) {
+    if (result.length >= 30) break;
+    push(e);
+  }
+
+  // 路2：citationCount 降序前 30（无计数按题名+摘要长度近似）
+  const scoreCite = (e) =>
+    typeof e.citationCount === "number"
+      ? e.citationCount
+      : (String(e.title || "").length + String(e.abstract || "").length) / 200;
+  const byCite = [...list].sort((a, b) => scoreCite(b) - scoreCite(a));
+  for (const e of byCite) {
+    if (result.length >= 60) break;
+    push(e);
+  }
+
+  // 路3：与方案关键词相关度最高 20（关键词命中 title+abstract+keywords 计数）
+  const keywords = String(planText || "")
+    .toLowerCase()
+    .split(/[^\u4e00-\u9fa5a-z0-9]+/i)
+    .filter((w) => w.length >= 2)
+    .slice(0, 40);
+  const relevance = (e) => {
+    if (keywords.length === 0) return 0;
+    const haystack = `${e.title || ""} ${e.abstract || ""} ${(e.keywords || []).join(" ")}`.toLowerCase();
+    return keywords.reduce((sum, k) => (haystack.includes(k) ? sum + 1 : sum), 0);
+  };
+  const byRel = [...list].sort((a, b) => relevance(b) - relevance(a));
+  for (const e of byRel) {
+    if (result.length >= 80) break;
+    push(e);
+  }
+
+  // 兜底填充（按时间）
+  for (const e of byTime) {
+    if (result.length >= 80) break;
+    push(e);
+  }
+
+  return result;
+}
+
+/** 生成文献分析报告（左栏"更新报告"） */
+export async function analyzeLiterature(ctx, literature, plan) {
+  const base = readPrompt(ctx, "literature-analysis.md");
+  const sampled = sampleLiterature(literature.entries || [], plan?.title || "");
+  const docs = {
+    plan: plan ? JSON.stringify(plan, null, 2) : "（尚未建立研究方案）",
+    literature: JSON.stringify(
+      sampled.map((e) => ({
+        title: e.title,
+        year: e.year,
+        venue: e.venue,
+        authors: (e.authors || []).slice(0, 5),
+        keywords: e.keywords || [],
+        abstract: (e.abstract || "").slice(0, 400),
+        source: e.source,
+      })),
+      null,
+      2
+    ),
+  };
+  const result = await sampleText(ctx, {
+    callPoint: "analyzeLiterature",
+    critical: true,
+    timeoutMs: 200000,
+    messages: [
+      { role: "system", content: base },
+      {
+        role: "user",
+        content: `研究方案：\n${docs.plan}\n\n文献库：\n${docs.literature}`,
+      },
+    ],
+    maxTokens: 4000,
+    temperature: 0.4,
+  });
+  return String(result?.text || "").trim();
+}
+
+/**
+ * E6：从分析报告文本提取聚类名（固定格式 `- 【聚类名】…`）
+ * 供 UI 渲染聚类 chips，点击按聚类名筛选文献
+ */
+export function extractClusters(text) {
+  const clusters = [];
+  const re = /^[-*]\s*【([^】]+)】/gm;
+  let m;
+  while ((m = re.exec(String(text || ""))) && clusters.length < 20) {
+    const name = m[1].trim();
+    if (name && !clusters.includes(name)) clusters.push(name);
+  }
+  return clusters;
+}
+
+/** 生成审查报告（方案/实验记录审查） */
+export async function reviewResearch(ctx, { plan, worklog, gantt, literature, rejected, reviews, target }) {
+  const base = readPrompt(ctx, "plan-reviewer.md");
+  const rejectedInjection = readPrompt(ctx, "rejected-feedback.md");
+  const recentRejected = (rejected?.entries || []).slice(-5);
+  const lastReview = (reviews?.entries || []).at(-1);
+
+  const docs = {
+    plan: JSON.stringify(plan || {}, null, 2),
+    worklog: JSON.stringify((worklog?.entries || []).slice(-30), null, 2),
+    gantt: JSON.stringify(gantt?.tasks || [], null, 2),
+    literature: JSON.stringify(
+      sampleLiterature(literature?.entries || [], plan?.title || "").map((e) => ({
+        title: e.title,
+        year: e.year,
+        venue: e.venue,
+        doi: e.doi,
+        abstract: (e.abstract || "").slice(0, 300),
+      })),
+      null,
+      2
+    ),
+    target: target || "research",
+  };
+
+  const rejectedPrompt =
+    recentRejected.length > 0
+      ? `\n\n以下是被拒绝过的历史提案（避免重复提议）：\n${rejectedInjection}\n${JSON.stringify(recentRejected, null, 2)}`
+      : "";
+
+  // B2：前次审查注入（对照闭环）
+  const reviewInjection = lastReview?.report
+    ? `\n\n最近一次审查报告（请逐条检查其提出的问题是否已解决，在输出中给出「前次问题 → 当前状态 → 是否闭环」对照）：\n${String(lastReview.report).slice(0, 3000)}`
+    : "\n\n（本次为首次审查，无需闭环对照）";
+
+  const result = await sampleText(ctx, {
+    callPoint: "reviewResearch",
+    critical: true,
+    timeoutMs: 200000,
+    messages: [
+      { role: "system", content: base },
+      {
+        role: "user",
+        content: `审查目标：${docs.target}\n\n研究方案：\n${docs.plan}\n\n实验记录：\n${docs.worklog}\n\n甘特图任务：\n${docs.gantt}\n\n文献库（改进建议需引用其中文献）：\n${docs.literature}${rejectedPrompt}${reviewInjection}`,
+      },
+    ],
+    maxTokens: 4000,
+    temperature: 0.4,
+  });
+  return String(result?.text || "").trim();
+}
+
+/**
+ * C1 方案引导：根据课题背景/问题/数据生成方案草案（JSON 解析）
+ */
+export async function draftProposalFromGuide(ctx, { background, problem, data }) {
+  const base = readPrompt(ctx, "proposal-guide.md");
+  const result = await sampleText(ctx, {
+    messages: [
+      { role: "system", content: base },
+      {
+        role: "user",
+        content: `课题背景：\n${String(background || "").slice(0, 1500)}\n\n要解决的问题：\n${String(problem || "").slice(0, 1500)}\n\n手头数据/已有条件：\n${String(data || "无").slice(0, 1500)}`,
+      },
+    ],
+    maxTokens: 1200,
+    temperature: 0.4,
+  });
+  const raw = String(result?.text || "").trim();
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    const title = String(parsed.title || "").trim();
+    if (!title) return null;
+    return {
+      title,
+      hypothesis: String(parsed.hypothesis || "").trim(),
+      route: String(parsed.route || "").trim(),
+      milestones: Array.isArray(parsed.milestones)
+        ? parsed.milestones.map((m) => String(m).trim()).filter(Boolean).slice(0, 6)
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * C3：从全文生成 2-3 句摘要（abstract 为空的 Zotero 条目用）
+ */
+export async function summarizeFromFulltext(ctx, entry, text) {
+  const result = await sampleText(ctx, {
+    messages: [
+      {
+        role: "system",
+        content:
+          "你是材料科学文献摘要助手。根据论文全文开头部分，用中文写 2-3 句摘要：该文研究什么、方法是什么、关键结论。只输出摘要正文，不要标题和解释。",
+      },
+      {
+        role: "user",
+        content: `论文标题：${entry.title || ""}（${entry.year || ""}）\n\n全文节选：\n${String(text || "").slice(0, 30000)}`,
+      },
+    ],
+    maxTokens: 300,
+    temperature: 0.3,
+  });
+  const summary = String(result?.text || "").trim();
+  return summary.length >= 20 ? summary : null;
+}
+
+/**
+ * E2：英文摘要 → 中文翻译（材料术语保真，保留原文对照用 abstractEn）
+ */
+export async function translateAbstract(ctx, entry, abstractEn) {
+  const result = await sampleText(ctx, {
+    callPoint: "translateAbstract",
+    messages: [
+      {
+        role: "system",
+        content:
+          "你是材料科学文献翻译助手。把英文摘要翻译成准确的中文：材料名称、术语、单位、数值必须保真（如 SnSe 保留为 SnSe，Seebeck coefficient 译为塞贝克系数）。只输出译文正文，不要标题、解释或原文。",
+      },
+      {
+        role: "user",
+        content: `论文标题：${entry.title || ""}（${entry.year || ""}）\n\n英文摘要：\n${String(abstractEn || "").slice(0, 4000)}`,
+      },
+    ],
+    maxTokens: 600,
+    temperature: 0.3,
+  });
+  const translated = String(result?.text || "").trim();
+  return translated.length >= 20 ? translated : null;
+}
+
+/**
+ * B3+B4 富化实验记录：参数抽取（fields ≤10 键值对）+ 文献关联（citations）
+ * 失败时返回 null（不阻塞记录流程）
+ */
+export async function enrichWorkEntry(ctx, { content, data, literature }) {  const base = readPrompt(ctx, "work-enrich.md");
+  const litList = (literature?.entries || [])
+    .slice(-120)
+    .map((e) => ({
+      id: e.id || e.zoteroKey || null,
+      zoteroKey: e.zoteroKey || null,
+      title: e.title,
+      doi: e.doi || null,
+      keywords: (e.keywords || []).slice(0, 8),
+    }))
+    .filter((e) => e.id);
+  if (litList.length === 0) return null;
+
+  const result = await sampleText(ctx, {
+    messages: [
+      { role: "system", content: base },
+      {
+        role: "user",
+        content: `实验记录内容：\n${String(content || "").slice(0, 3000)}\n\n原始数据：\n${String(data || "").slice(0, 2000)}\n\n文献库条目：\n${JSON.stringify(litList, null, 2)}`,
+      },
+    ],
+    maxTokens: 600,
+    temperature: 0.2,
+  });
+
+  const raw = String(result?.text || "").trim();
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    return null;
+  }
+  const fields = Array.isArray(parsed?.fields)
+    ? parsed.fields
+        .filter((f) => f && typeof f.k === "string" && f.k.trim())
+        .slice(0, 10)
+        .map((f) => ({ k: f.k.trim(), v: String(f.v ?? "").trim() }))
+        .filter((f) => f.v)
+    : [];
+  const citations = Array.isArray(parsed?.citations)
+    ? parsed.citations.map((c) => String(c).trim()).filter(Boolean).slice(0, 5)
+    : [];
+  if (fields.length === 0 && citations.length === 0) return null;
+  return { fields, citations };
+}
+
+/**
+ * 实验记录 AI 巡检：参数结构化 + 文献关联 + 甘特进度推断 + 日程识别 + 方案对比
+ * 一次 LLM 调用输出全部结果；解析失败返回 null（不阻塞主流程）
+ */
+export async function triageWorkEntry(ctx, { entries, plan, gantt, literature, today }) {
+  const base = readPrompt(ctx, "worklog-triage.md");
+  const litList = (literature?.entries || [])
+    .slice(-120)
+    .map((e) => ({
+      id: e.id || e.zoteroKey || null,
+      zoteroKey: e.zoteroKey || null,
+      title: e.title,
+      doi: e.doi || null,
+      keywords: (e.keywords || []).slice(0, 8),
+    }))
+    .filter((e) => e.id);
+  const taskList = (gantt?.tasks || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    progress: Number(t.progress) || 0,
+  }));
+  const docs = {
+    today: today || new Date().toISOString().slice(0, 10),
+    "实验记录": (entries || []).map((e) => ({
+      id: e.id,
+      sampleId: e.sampleId || null,
+      date: e.date || null,
+      content: String(e.content || "").slice(0, 2000),
+      data: String(e.data || "").slice(0, 1500) || null,
+      taskId: e.taskId || null,
+    })),
+    "研究方案": plan ? { title: plan.title, hypothesis: plan.hypothesis, route: plan.route, milestones: plan.milestones } : null,
+    "甘特任务": taskList,
+    "文献库": litList,
+  };
+
+  const result = await sampleText(ctx, {
+    callPoint: "triageWorkEntry",
+    messages: [
+      { role: "system", content: base },
+      { role: "user", content: JSON.stringify(docs, null, 2) },
+    ],
+    maxTokens: 900,
+    temperature: 0.2,
+  });
+
+  const raw = String(result?.text || "").trim();
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    ctx?.log?.warn("triageWorkEntry: LLM 输出非 JSON，跳过巡检");
+    return null;
+  }
+
+  const taskIds = new Set(taskList.map((t) => t.id));
+  const fields = Array.isArray(parsed?.fields)
+    ? parsed.fields
+        .filter((f) => f && typeof f.k === "string" && f.k.trim())
+        .slice(0, 10)
+        .map((f) => ({ k: f.k.trim(), v: String(f.v ?? "").trim() }))
+        .filter((f) => f.v)
+    : [];
+  const citations = Array.isArray(parsed?.citations)
+    ? parsed.citations.map((c) => String(c).trim()).filter(Boolean).slice(0, 5)
+    : [];
+  const taskProgress = Array.isArray(parsed?.taskProgress)
+    ? parsed.taskProgress
+        .filter((tp) => tp && taskIds.has(String(tp.taskId)))
+        .map((tp) => {
+          const p = Math.min(100, Math.max(0, Number(tp.progress) || 0));
+          return { taskId: String(tp.taskId), progress: Math.round(p), reason: String(tp.reason || "").slice(0, 60) };
+        })
+        .filter((tp) => tp.reason)
+        .slice(0, 3)
+    : [];
+  const events = Array.isArray(parsed?.events)
+    ? parsed.events
+        .filter((ev) => ev && typeof ev.title === "string" && ev.title.trim() && /^\d{4}-\d{2}-\d{2}$/.test(String(ev.date || "")))
+        .map((ev) => ({
+          title: String(ev.title).trim().slice(0, 80),
+          date: String(ev.date),
+          startTime: typeof ev.startTime === "string" && /^\d{2}:\d{2}$/.test(ev.startTime) ? ev.startTime : null,
+          type: ["experiment", "meeting", "deadline", "other"].includes(ev.type) ? ev.type : "other",
+          reason: String(ev.reason || "").slice(0, 60),
+        }))
+        .slice(0, 3)
+    : [];
+  const planNote = typeof parsed?.planNote === "string" && parsed.planNote.trim() ? parsed.planNote.trim().slice(0, 300) : null;
+
+  return { fields, citations, taskProgress, events, planNote };
+}
+
+/**
+ * 生成下一步行动建议（log_work 后返回）
+ * 上下文含：研究方案 / 近期实验记录（含刚记录的新条目）/ 时间表 / 已排日程（避免与已排安排冲突）
+ */
+export async function nextStepAdvice(ctx, plan, worklog, gantt, calendar) {
+  const base = readPrompt(ctx, "next-step-advisor.md");
+  const docs = {
+    plan: JSON.stringify(plan || {}, null, 2),
+    worklog: JSON.stringify((worklog?.entries || []).slice(-10), null, 2),
+    gantt: JSON.stringify((gantt?.tasks || []), null, 2),
+    calendar: JSON.stringify((calendar?.events || []).slice(-20), null, 2),
+  };
+  const result = await sampleText(ctx, {
+    messages: [
+      { role: "system", content: base },
+      {
+        role: "user",
+        content: `研究方案：\n${docs.plan}\n\n近期实验记录：\n${docs.worklog}\n\n时间表：\n${docs.gantt}\n\n已排日程：\n${docs.calendar}`,
+      },
+    ],
+    maxTokens: 800,
+    temperature: 0.4,
+  });
+  return String(result?.text || "").trim();
+}
+
+/**
+ * #6 里程碑联动：把研究方案的里程碑派生为甘特任务 + 日历事件所需的排期
+ * 一次 LLM 调用输出全部结果；解析失败返回 { items: [] }（不阻塞主流程）
+ */
+export async function deriveScheduleFromPlan(ctx, { plan, today }) {
+  const milestones = Array.isArray(plan?.milestones) ? plan.milestones : [];
+  if (milestones.length === 0) return { items: [] };
+
+  const base = readPrompt(ctx, "plan-milestones.md");
+  const docs = {
+    today: today || new Date().toISOString().slice(0, 10),
+    "研究方案": plan
+      ? { title: plan.title, hypothesis: plan.hypothesis, route: plan.route, milestones }
+      : null,
+  };
+
+  const result = await sampleText(ctx, {
+    callPoint: "deriveScheduleFromPlan",
+    messages: [
+      { role: "system", content: base },
+      { role: "user", content: JSON.stringify(docs, null, 2) },
+    ],
+    maxTokens: 1200,
+    temperature: 0.3,
+  });
+
+  const raw = String(result?.text || "").trim();
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { items: [] };
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    ctx?.log?.warn("deriveScheduleFromPlan: LLM 输出非 JSON，跳过");
+    return { items: [] };
+  }
+
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const items = Array.isArray(parsed?.items)
+    ? parsed.items
+        .filter((it) => it && typeof it.milestone === "string" && it.milestone.trim())
+        .map((it) => {
+          const start = dateRe.test(String(it.start)) ? String(it.start) : null;
+          const end = dateRe.test(String(it.end)) ? String(it.end) : null;
+          const eventDate = dateRe.test(String(it.eventDate))
+            ? String(it.eventDate)
+            : end; // 日历节点默认对齐任务结束日
+          return {
+            milestone: String(it.milestone).trim().slice(0, 200),
+            taskName: String(it.taskName || it.milestone).trim().slice(0, 40),
+            start,
+            end,
+            eventTitle: String(it.eventTitle || it.milestone).trim().slice(0, 60),
+            eventDate,
+            eventType: ["deadline", "experiment", "meeting", "other"].includes(it.eventType)
+              ? it.eventType
+              : "deadline",
+          };
+        })
+        .filter((it) => it.start && it.end)
+        .slice(0, 6)
+    : [];
+  return { items };
+}

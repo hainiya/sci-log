@@ -1,0 +1,113 @@
+{
+  "manifestVersion": 1,
+  "id": "materials-research-copilot",
+  "name": "科研工作",
+  "version": "0.1.0",
+  "description": "科研工作：研究方案管理 + 甘特图 + 日历 + 文献库 + 任务清单 + 实验记录审查",
+  "minAppVersion": "0.159.0",
+  "trust": "full-access",
+  "capabilities": [
+    "session",
+    "model.sample",
+    "network.fetch",
+    "resource.read",
+    "resource.search",
+    "resource.watch",
+    "resource.materialize"
+  ],
+  "network": {
+    "allowedHosts": [
+      "api.semanticscholar.org",
+      "export.arxiv.org",
+      "api.crossref.org",
+      "api.openalex.org",
+      "localhost",
+      "127.0.0.1"
+    ],
+    "methods": ["GET", "POST"],
+    "defaultTimeoutMs": 15000,
+    "maxResponseBytes": 10485760,
+    "allowLocalhost": true
+  },
+  "contributes": {
+    "page": {
+      "title": "科研工作",
+      "route": "/page",
+      "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M5 5h14v14H5z\"/><path d=\"M9 9h6M9 13h6\"/></svg>"
+    },
+    "widget": {
+      "title": "科研工作",
+      "route": "/widget",
+      "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M8 7l-4 5 4 5\"/><path d=\"M16 7l4 5-4 5\"/></svg>"
+    },
+    "configuration": {
+      "type": "object",
+      "properties": {
+        "zoteroPort": {
+          "type": "integer",
+          "default": 23119,
+          "title": "Zotero 本地 API 端口",
+          "description": "Zotero 桌面客户端本地 API 监听端口（Zotero 7+，需保持客户端运行）"
+        },
+        "autoCollectEnabled": {
+          "type": "boolean",
+          "default": true,
+          "title": "讨论确定方向后自动搜集文献",
+          "description": "绑定会话后，检测到研究方向性讨论时自动检索相关文献并入库存"
+        },
+    "autoApproveLiterature": {
+      "type": "boolean",
+      "default": true,
+      "title": "新增文献免提案确认",
+      "description": "自动检索/扫描新增的文献直接入库（删除与修改仍需逐条确认）"
+    },
+    "autoTriage": {
+      "type": "boolean",
+      "default": true,
+      "title": "实验记录自动巡检",
+      "description": "每次实验记录写入后自动 AI 巡检（参数结构化/文献关联/甘特进度/日程/时长提取），生成提案待确认；关闭后仍可手动巡检"
+    }
+      }
+    }
+  },
+  "ui": {
+    "hostCapabilities": ["external.open"]
+  },
+  "dev": {
+    "scenarios": [
+      {
+        "id": "smoke-manage-plan",
+        "steps": [
+          {
+            "invokeTool": {
+              "name": "manage_plan",
+              "input": {
+                "action": "read",
+                "target": "plan"
+              }
+            }
+          },
+          {
+            "expectToolText": "研究方案"
+          }
+        ]
+      },
+      {
+        "id": "smoke-export-report",
+        "steps": [
+          {
+            "invokeTool": {
+              "name": "export_report",
+              "input": {
+                "type": "report"
+              }
+            }
+          },
+          {
+            "expectToolText": "报告"
+          }
+        ]
+      }
+    ]
+  }
+}
