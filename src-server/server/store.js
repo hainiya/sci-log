@@ -1,5 +1,5 @@
 /**
- * 数据层：10 个 JSON 数据文件 + 乐观锁 + 追加式写入 + 版本快照 + 水位线
+ * 数据层：JSON 数据文件 + 乐观锁 + 追加式写入 + 版本快照 + 水位线
  *
  * 并发规则：
  * - 所有可编辑文件顶层含 version，任何写入都必须携带读取时的 version
@@ -15,36 +15,22 @@ export const MAX_SNAPSHOTS = 20;
 export const LITERATURE_COMPACT_THRESHOLD = 500;
 
 const DEFAULT_DOC = {
-  plan: () => ({ version: 0, title: "", hypothesis: "", route: "", milestones: [], updatedAt: null }),
-  "plan-evolution": () => ({ version: 0, entries: [] }),
   gantt: () => ({ version: 0, tasks: [], updatedAt: null }),
   calendar: () => ({ version: 0, events: [], updatedAt: null }),
   literature: () => ({ version: 0, entries: [], updatedAt: null, lastCompactedAt: null }),
   worklog: () => ({ version: 0, entries: [], updatedAt: null }),
-  reviews: () => ({ version: 0, entries: [], updatedAt: null }),
-  proposals: () => ({ version: 0, entries: [], updatedAt: null }),
-  rejected: () => ({ version: 0, entries: [], updatedAt: null }),
   binding: () => ({ sessionId: null, sessionPath: null, boundAt: null, source: null }),
-  updates: () => ({ literature: 0, proposals: 0, reviews: 0, report: 0, rejected: 0, worklog: 0, plan: 0, gantt: 0, calendar: 0 }),
+  updates: () => ({ literature: 0, worklog: 0, gantt: 0, calendar: 0 }),
   settings: () => ({ updatedAt: null }),
   // D1：Zotero collection 映射（只读镜像），走版本锁 + 快照
   collections: () => ({ version: 0, collections: [], updatedAt: null }),
-  report: () => ({ version: 0, content: "", updatedAt: null, planVersion: null, literatureVersion: null }),
-  // P1-2：文献对照评估（只读报告，结构同 report，附 gaps 标签）
-  assessment: () => ({ version: 0, content: "", gaps: [], updatedAt: null, planVersion: null, literatureVersion: null }),
 };
 
 export const UPDATES_KEYS = {
-  plan: "plan",
   gantt: "gantt",
   calendar: "calendar",
   worklog: "worklog",
   literature: "literature",
-  reviews: "reviews",
-  proposals: "proposals",
-  rejected: "rejected",
-  report: "report",
-  assessment: "assessment",
 };
 
 function filePathFor(dataDir, name) {
