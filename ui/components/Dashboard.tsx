@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { api } from '../api';
 
 type Props = {
   state: any;
   onStateChange: () => Promise<void>;
   showToast: (msg: string, opts?: { error?: boolean }) => void;
-  onGoProposals: () => void;
   onGoSchedule: () => void;
 };
 
@@ -14,17 +13,20 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** 本周起始 ISO（周一） */
+function weekStartIso() {
+  const now = new Date();
+  const day = now.getDay() || 7; // 周日=7
+  const start = new Date(now.getTime() - (day - 1) * 86400000);
+  start.setHours(0, 0, 0, 0);
+  return start.toISOString();
+}
+
 /**
  * 今日概览：打开面板第一眼看到的东西。
- * 今日进行中任务（可勾选）、临期任务、今日日程、待确认提案、本周统计。
+ * 今日进行中任务（可勾选）、临期任务、今日日程、本周统计（基于 state 直接计算）。
  */
-export function Dashboard({ state, onStateChange, showToast, onGoProposals, onGoSchedule }: Props) {
-  const [week, setWeek] = useState<any>(null);
-
-  useEffect(() => {
-    api.weekSummary().then(setWeek).catch(() => {});
-  }, [state?.worklog?.version, state?.literature?.version, state?.gantt?.version]);
-
+export function Dashboard({ state, onStateChange, showToast, onGoSchedule }: Props) {
   const tasks: any[] = state?.gantt?.tasks || [];
   const events: any[] = state?.calendar?.events || [];
   const today = todayStr();
@@ -41,10 +43,18 @@ export function Dashboard({ state, onStateChange, showToast, onGoProposals, onGo
   }, [tasks, today]);
 
   const todayEvents = useMemo(() => events.filter((e) => e.date === today), [events, today]);
-  const pendingCount = useMemo(
-    () => (state?.proposals?.entries || []).filter((p: any) => p.status === 'pending').length,
-    [state]
-  );
+
+  // 本周统计：基于 state 直接计算（实验记录中心化后移除 weekSummary 端点的依赖）
+  const week = useMemo(() => {
+    const startIso = weekStartIso();
+    const inWeek = (iso: string | undefined) => iso && iso >= startIso;
+    const worklog = state?.worklog?.entries || [];
+    const literature = state?.literature?.entries || [];
+    const workCount = worklog.filter((e: any) => inWeek(e.createdAt)).length;
+    const litCount = literature.filter((e: any) => inWeek(e.addedAt)).length;
+    const avgProgress = tasks.length > 0 ? Math.round(tasks.reduce((s: number, t: any) => s + (Number(t.progress) || 0), 0) / tasks.length) : 0;
+    return { workCount, litCount, avgProgress };
+  }, [state, tasks]);
 
   const completeTask = async (id: string) => {
     try {
@@ -92,23 +102,13 @@ export function Dashboard({ state, onStateChange, showToast, onGoProposals, onGo
         {(dueSoon.length > 3 || todayEvents.length > 2) && <button className="mrc-dash-more" onClick={onGoSchedule}>查看日程 →</button>}
       </div>
 
-      <button className={`mrc-dash-card mrc-dash-proposals ${pendingCount > 0 ? 'has-pending' : ''}`} onClick={onGoProposals}>
-        <div className="mrc-dash-num">{pendingCount}</div>
-        <div className="mrc-dash-label">待确认提案</div>
-        {pendingCount > 0 && <div className="mrc-dash-cta">去处理 →</div>}
-      </button>
-
       <div className="mrc-dash-card mrc-dash-week">
         <div className="mrc-dash-title">🗓️ 本周</div>
-        {week ? (
-          <div className="mrc-dash-week-grid">
-            <div><b>{week.workCount ?? 0}</b><span>实验记录</span></div>
-            <div><b>{week.litCount ?? 0}</b><span>文献新增</span></div>
-            <div><b>{week.avgProgress ?? 0}%</b><span>平均进度</span></div>
-          </div>
-        ) : (
-          <div className="mrc-dash-empty">统计加载中…</div>
-        )}
+        <div className="mrc-dash-week-grid">
+          <div><b>{week.workCount ?? 0}</b><span>实验记录</span></div>
+          <div><b>{week.litCount ?? 0}</b><span>文献新增</span></div>
+          <div><b>{week.avgProgress ?? 0}%</b><span>平均进度</span></div>
+        </div>
       </div>
     </div>
   );

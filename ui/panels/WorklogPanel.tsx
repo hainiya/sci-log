@@ -135,13 +135,12 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
             content: content.trim(),
             data: data.trim() || null,
             taskId: taskId || null,
-            planVersion: state?.plan?.version ?? null,
             durationHours: dhNum,
             startDate: startDate.trim() || null,
             createdAt: new Date().toISOString(),
           },
         ],
-        `实验记录已保存${finalSampleId ? `（${finalSampleId}）` : ''}，AI 巡检中，稍后可在「提案确认」查看关联文献/进度/日程建议`
+        `实验记录已保存${finalSampleId ? `（${finalSampleId}）` : ''}，AI 巡检中，稍后在「实验记录」中查看关联文献/进度/日程建议`
       );
       if (ok && taskId && progress !== '') {
         await api.write('gantt', state.gantt.version, {

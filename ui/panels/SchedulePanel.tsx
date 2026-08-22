@@ -17,7 +17,6 @@ function newId(prefix: string) {
 export function SchedulePanel({ state, onStateChange, showToast }: Props) {
   const gantt = state?.gantt || { version: 0, tasks: [] };
   const calendar = state?.calendar || { version: 0, events: [] };
-  const plan = state?.plan || {};
   const tasks: GanttTask[] = gantt.tasks || [];
 
   // 从实验记录投影实际时间线（只读，改记录自动同步；记录删除自动消失）
@@ -33,18 +32,6 @@ export function SchedulePanel({ state, onStateChange, showToast }: Props) {
       return { id: 'act_' + e.id, name: String(e.content || '').slice(0, 20), start, end, kind: 'actual' as const };
     });
   const events: CalendarEvent[] = calendar.events || [];
-  // 里程碑兼容字符串数组与对象数组（{id,name,date,criteria}）：对象取 name+date 展示
-  const milestones: any[] = Array.isArray(plan.milestones) ? plan.milestones : [];
-  const milestoneLabel = (m: any): string => {
-    if (m == null) return '';
-    if (typeof m === 'string') return m;
-    if (typeof m === 'object') {
-      const name = m.name ?? m.title ?? m.text;
-      if (name == null) return '';
-      return String(name) + (m.date ? `（${m.date}）` : '');
-    }
-    return String(m);
-  };
   const [newTaskName, setNewTaskName] = useState('');
   const [tab, setTab] = useState<'gantt' | 'calendar'>('gantt');
   // 滑块拖动中只改本地预览，松手才落库（避免拖动过程连续写盘的版本冲突风暴）
@@ -94,18 +81,6 @@ export function SchedulePanel({ state, onStateChange, showToast }: Props) {
     await setProgress(id, (t?.progress || 0) >= 100 ? 0 : 100);
   };
 
-  // 里程碑 → 甘特任务：把方案里的里程碑一键转为可排期的甘特任务
-  const milestoneToTask = async (text: string) => {
-    const name = text.trim();
-    if (!name) return;
-    const now = new Date();
-    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const d = new Date(now.getTime() + 14 * 86400000);
-    const end = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    await saveGantt([...tasks, { id: newId('task'), name: `里程碑：${name}`, start, end, dependsOn: [], progress: 0, tags: ['milestone'] }]);
-    showToast(`已将里程碑「${name}」转为甘特任务`);
-  };
-
   return (
     <div className="mrc-schedule">
       <div className="mrc-panel-section">
@@ -117,7 +92,7 @@ export function SchedulePanel({ state, onStateChange, showToast }: Props) {
         {tab === 'gantt' && (
           <div className="mrc-gantt-wrap">
             {tasks.length === 0 && actuals.length === 0 ? (
-              <div className="mrc-empty">还没有任务。在下方任务清单添加，或把方案里程碑一键转为任务。</div>
+              <div className="mrc-empty">还没有任务。在下方任务清单添加，即可在甘特图排期。</div>
             ) : (
               <GanttChart tasks={tasks} actuals={actuals} onSave={saveGantt} />
             )}
@@ -130,24 +105,6 @@ export function SchedulePanel({ state, onStateChange, showToast }: Props) {
       </div>
 
       <div className="mrc-schedule-side">
-        {/* 里程碑与甘特打通 */}
-        <div className="mrc-panel-section">
-          <div className="mrc-section-head">
-            <span className="mrc-section-title">🎯 方案里程碑</span>
-            <span className="mrc-count">{milestones.length}</span>
-          </div>
-          {milestones.length === 0 && <div className="mrc-empty">方案里还没有里程碑。在「研究方案」中填写里程碑后，可在此一键转为甘特任务排期。</div>}
-          <div className="mrc-milestone-list">
-            {milestones.map((m, i) => (
-              <div key={i} className="mrc-milestone-row">
-                <span className="mrc-milestone-idx">M{i + 1}</span>
-                <span className="mrc-milestone-text">{milestoneLabel(m)}</span>
-                <button className="mrc-btn small" onClick={() => milestoneToTask(milestoneLabel(m))} title="转为甘特任务">＋ 转任务</button>
-              </div>
-            ))}
-          </div>
-        </div>
-
         <div className="mrc-panel-section">
           <div className="mrc-section-head">
             <span className="mrc-section-title">任务清单</span>

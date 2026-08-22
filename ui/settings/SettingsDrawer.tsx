@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { ConfirmButton } from '../components/ConfirmButton';
 
 type Props = {
   state: any;
@@ -11,7 +10,6 @@ type Props = {
 
 export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Props) {
   const [binding, setBinding] = useState<any>(null);
-  const [rejected, setRejected] = useState<any[]>([]);
   const [zotero, setZotero] = useState<any>(null);
   const [probing, setProbing] = useState(false);
   const [yearWindow, setYearWindow] = useState<number>(Number((state as any)?.settings?.searchYearWindow) || 5);
@@ -24,7 +22,6 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
 
   useEffect(() => {
     api.getBinding().then(setBinding).catch(() => {});
-    api.getRejected().then((r) => setRejected(r.entries || [])).catch(() => {});
     loadZotero();
   }, []);
 
@@ -53,7 +50,7 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
   const bindCurrent = async () => {
     const sessionId = state?.sessionId;
     if (!sessionId) {
-      showToast('当前面板未能获取会话标识，请在对话中让助手执行 manage_plan 等操作完成绑定');
+      showToast('当前面板未能获取会话标识，请在对话中让助手执行一次工具操作完成绑定');
       return;
     }
     try {
@@ -71,13 +68,6 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
     showToast('已解除绑定');
   };
 
-  const clearRejected = async () => {
-    await api.clearRejected();
-    setRejected([]);
-    showToast('拒绝记录已清空');
-    await onStateChange();
-  };
-
   return (
     <div className="mrc-drawer-mask" onClick={onClose}>
       <div className="mrc-drawer" onClick={(e) => e.stopPropagation()}>
@@ -88,7 +78,7 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
 
         <section className="mrc-drawer-section">
           <h4>📚 Zotero 连接</h4>
-          <p className="mrc-drawer-hint">Zotero 本地库以只读镜像同步进文献库，分析报告会纳入 Zotero 条目。</p>
+          <p className="mrc-drawer-hint">Zotero 本地库以只读镜像同步进文献库。</p>
           {zotero?.ok ? (
             <div className="mrc-folder-row">
               <span>🟢 已连接（{zotero.total ?? 0} 条）</span>
@@ -103,7 +93,7 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
 
         <section className="mrc-drawer-section">
           <h4>🔗 会话绑定管理</h4>
-          <p className="mrc-drawer-hint">绑定后，lifecycle 会监听该会话的研究方向讨论并自动搜集文献（受 autoCollectEnabled 开关控制）。</p>
+          <p className="mrc-drawer-hint">绑定后，lifecycle 会监听该会话的用户消息并节流同步 Zotero 本地库（受 autoCollectEnabled 开关控制）。</p>
           {binding?.sessionId ? (
             <div className="mrc-folder-row">
               <span>已绑定：{binding.sessionId.slice(0, 18)}…（{binding.source === 'auto' ? '自动' : '手动'}，{binding.boundAt ? new Date(binding.boundAt).toLocaleString('zh-CN') : ''}）</span>
@@ -119,7 +109,7 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
 
         <section className="mrc-drawer-section">
           <h4>🔍 检索设置</h4>
-          <p className="mrc-drawer-hint">在线检索与自动搜集文献时的默认时间范围（收集方向由检索词决定，时间由此窗口限定）。</p>
+          <p className="mrc-drawer-hint">Zotero 收纳相关的时间过滤默认窗口。</p>
           <div className="mrc-folder-row">
             <span>默认检索窗口</span>
             <input
@@ -137,13 +127,12 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
 
         <section className="mrc-drawer-section">
           <h4>🤖 AI 巡检</h4>
-          <p className="mrc-drawer-hint">每次实验记录写入后自动 AI 巡检（参数结构化/文献关联/甘特进度/日程/时长提取），生成提案待你确认。关闭后仍可手动巡检。</p>
+          <p className="mrc-drawer-hint">每次实验记录写入后自动 AI 巡检（参数结构化/文献关联/甘特进度/日程/时长提取），直接写库。关闭后仍可手动巡检。</p>
           <label className="mrc-switch-row">
             <input
               type="checkbox"
               checked={autoTriage}
               onChange={async (e) => {
-                // 仅在用户 toggle 事件时回写端点（服务端 body?.enabled === true 逐字判定）
                 const v = e.target.checked;
                 try {
                   await api.saveAutoTriage(v);
@@ -158,21 +147,6 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
             />
             <span>实验记录自动巡检</span>
           </label>
-        </section>
-
-        <section className="mrc-drawer-section">
-          <h4>🚫 拒绝记录（{rejected.length}）</h4>
-          <p className="mrc-drawer-hint">AI 生成提案/建议时会参考最近 5 条拒绝记录，避免重复提议。</p>
-          {rejected.length === 0 && <div className="mrc-empty">暂无拒绝记录</div>}
-          {rejected.slice(-5).reverse().map((r) => (
-            <div key={r.id} className="mrc-rejected-row">
-              <div className="mrc-rejected-summary">{r.summary}</div>
-              <div className="mrc-rejected-reason">理由：{r.reason}</div>
-            </div>
-          ))}
-          {rejected.length > 0 && (
-            <ConfirmButton label="清空拒绝记录" className="mrc-btn small danger" onConfirm={clearRejected} title="清空后 AI 将不再参考这些拒绝理由" />
-          )}
         </section>
       </div>
     </div>
