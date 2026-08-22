@@ -5,9 +5,7 @@ import '@hana/plugin-components/styles.css';
 import './panel.css';
 import { api, hana } from './api';
 import { LiteraturePanel } from './panels/LiteraturePanel';
-import { PlanPanel } from './panels/PlanPanel';
 import { WorklogPanel } from './panels/WorklogPanel';
-import { ProposalsPanel } from './panels/ProposalsPanel';
 import { SchedulePanel } from './panels/SchedulePanel';
 import { MetricsPanel } from './panels/MetricsPanel';
 import { SettingsDrawer } from './settings/SettingsDrawer';
@@ -15,15 +13,13 @@ import { Dashboard } from './components/Dashboard';
 
 const POLL_INTERVAL_MS = 15_000;
 
-type MainTab = 'literature' | 'plan' | 'worklog' | 'schedule' | 'proposals' | 'metrics';
+type MainTab = 'schedule' | 'worklog' | 'metrics' | 'literature';
 
 const TABS: { key: MainTab; label: string }[] = [
-  { key: 'literature', label: '📚 文献库' },
-  { key: 'plan', label: '🧭 研究方案' },
-  { key: 'worklog', label: '🧪 实验记录' },
   { key: 'schedule', label: '📅 日程' },
+  { key: 'worklog', label: '🧪 实验记录' },
   { key: 'metrics', label: '📈 指标趋势' },
-  { key: 'proposals', label: '📋 提案确认' },
+  { key: 'literature', label: '📚 文献库' },
 ];
 
 /** 渲染期错误兜底：React 19 无 error boundary 时渲染错误会卸载整个 root（白屏且不可恢复） */
@@ -55,12 +51,11 @@ function Panel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [since, setSince] = useState<Record<string, number>>({});
-  const [tab, setTab] = useState<MainTab>('literature');
+  const [tab, setTab] = useState<MainTab>('schedule');
   const [pendingEditEntryId, setPendingEditEntryId] = useState<string | null>(null); // 跨 tab 补标注：待打开编辑弹窗的 worklog 条目 id
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // 宿主原生 toast（@hana/plugin-sdk hana.toast.show）：替代自建 DOM toast（技术栈复审结论）
-  // 错误提示停留更久——版本冲突这类需要行动的提示不能一闪而过（duration 语义与原自建实现对齐）
+  // 宿主原生 toast（@hana/plugin-sdk hana.toast.show）：替代自建 DOM toast
   const showToast = (message: string, opts?: { error?: boolean }) => {
     void hana.toast.show({ message, type: opts?.error ? 'error' : 'info', duration: opts?.error ? 12000 : 4000 });
   };
@@ -100,11 +95,6 @@ function Panel() {
     hana.ui.resize({ height: surface === 'widget' ? 420 : 780 });
   }, [surface]);
 
-  const pendingProposals = useMemo(() => {
-    const entries = state?.proposals?.entries || [];
-    return entries.filter((p: any) => p.status === 'pending');
-  }, [state]);
-
   const goTab = (t: MainTab) => setTab(t);
 
   return (
@@ -118,7 +108,7 @@ function Panel() {
               {state?.binding?.sessionId ? (
                 <span className="mrc-badge ok">已绑定会话</span>
               ) : (
-                <span className="mrc-badge warn" title="绑定后会话中的研究方向讨论会自动触发文献搜集；面板导出也依赖绑定">未绑定会话</span>
+                <span className="mrc-badge warn" title="绑定后会话中的讨论会自动触发 Zotero 同步；面板导出也依赖绑定">未绑定会话</span>
               )}
             </span>
           </div>
@@ -138,10 +128,9 @@ function Panel() {
               state={state}
               onStateChange={loadState}
               showToast={showToast}
-              onGoProposals={() => {}}
               onGoSchedule={() => {}}
             />
-            <div className="mrc-hint">完整功能请打开插件页面（文献 / 方案 / 实验记录 / 日程）。</div>
+            <div className="mrc-hint">完整功能请打开插件页面（日程 / 实验记录 / 指标趋势 / 文献库）。</div>
           </main>
         ) : (
           <>
@@ -149,26 +138,19 @@ function Panel() {
               state={state}
               onStateChange={loadState}
               showToast={showToast}
-              onGoProposals={() => goTab('proposals')}
               onGoSchedule={() => goTab('schedule')}
             />
 
             <nav className="mrc-main-tabs">
               {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  className={`mrc-main-tab ${tab === t.key ? 'active' : ''} ${t.key === 'proposals' && pendingProposals.length > 0 ? 'has-badge' : ''}`}
-                  onClick={() => goTab(t.key)}
-                >
+                <button key={t.key} className={`mrc-main-tab ${tab === t.key ? 'active' : ''}`} onClick={() => goTab(t.key)}>
                   {t.label}
-                  {t.key === 'proposals' && pendingProposals.length > 0 && <span className="mrc-tab-badge">{pendingProposals.length}</span>}
                 </button>
               ))}
             </nav>
 
             <main className="mrc-main">
-              {tab === 'literature' && <LiteraturePanel state={state} onStateChange={loadState} showToast={showToast} />}
-              {tab === 'plan' && <PlanPanel state={state} onStateChange={loadState} showToast={showToast} />}
+              {tab === 'schedule' && <SchedulePanel state={state} onStateChange={loadState} showToast={showToast} />}
               {tab === 'worklog' && (
                 <WorklogPanel
                   state={state}
@@ -178,7 +160,6 @@ function Panel() {
                   onConsumeEditEntryId={() => setPendingEditEntryId(null)}
                 />
               )}
-              {tab === 'schedule' && <SchedulePanel state={state} onStateChange={loadState} showToast={showToast} />}
               {tab === 'metrics' && (
                 <MetricsPanel
                   state={state}
@@ -187,19 +168,9 @@ function Panel() {
                   onEditWorklog={(entryId) => { setPendingEditEntryId(entryId); setTab('worklog'); }}
                 />
               )}
-              {tab === 'proposals' && (
-                <div className="mrc-panel-section">
-                  <ProposalsPanel state={state} onStateChange={loadState} showToast={showToast} />
-                </div>
-              )}
+              {tab === 'literature' && <LiteraturePanel state={state} onStateChange={loadState} showToast={showToast} />}
             </main>
           </>
-        )}
-
-        {surface !== 'widget' && pendingProposals.length > 0 && tab !== 'proposals' && (
-          <div className="mrc-proposal-float" onClick={() => goTab('proposals')}>
-            📋 {pendingProposals.length} 个待确认提案 →
-          </div>
         )}
 
         {settingsOpen && (
