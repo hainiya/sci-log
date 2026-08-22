@@ -240,3 +240,16 @@
    （`syncZotero`），不再检索在线源。文献收纳动作仍自动日志化到 worklog。
 
 以上两项均已在实现计划前明确，代码落地无"或"分叉。
+
+---
+
+## 14. 实现落地说明（2026-08-22）
+
+本规格已按上文实现并提交（见 `docs/superpowers/plans/2026-08-22-experiment-record-centering.md`）。
+实现中的关键实际决策（与早期倾向的差异）：
+
+- **`analyze_metrics` 保留**：指标趋势模块作为「记录实验性能参数」的一部分保留。
+- **`export_report` 改造而非删除**：仅保留导出实验记录（worklog），移除 review/report/bibtex 分支。
+- **`reviews.json` 移除**：实验记录审查已由 triage 巡检承担，独立审查报告不保留。
+- **文献日志化触发**：`syncZotero` 检测新增条目（zoteroKey 未在旧库）自动 `appendLiteratureLog`。
+- **构建约束**：`@hana/*` 依赖经 `file:../openhanako` 引用，当前环境未装 node_modules；服务端已通过全量 `node --check` 语法与 import 完整性静态验证，纯单元测试（literature-log/import-parser/parsers/metrics/analyze-metrics）实测通过；`sources/zotero-sync` 等依赖 @hana 的测试需 node + 宿主依赖就绪后运行。
