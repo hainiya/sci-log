@@ -17,6 +17,41 @@ type UnrecognizedItem = {
   content?: string;
 };
 
+/** 未识别材料体系警告条（规格 3.4）：不进图、不计指标，可展开逐条补标注 */
+function UnrecognizedWarnBar({ count, items, open, onToggle, onEdit }: { count: number; items: UnrecognizedItem[]; open: boolean; onToggle: () => void; onEdit: (entryId: string) => void }) {
+  if (count === 0) return null;
+  return (
+    <div className="mrc-metrics-warn">
+      <button type="button" className="mrc-metrics-warn-head" onClick={onToggle}>
+        <span>⚠️ {count} 条实验记录未识别材料体系</span>
+        <span className="mrc-metrics-warn-toggle">{open ? '收起 ▾' : '查看 ▸'}</span>
+      </button>
+      {open && (
+        <div className="mrc-metrics-warn-list">
+          {items.map((u, i) => (
+            <div key={u.entryId || i} className="mrc-metrics-warn-item">
+              <span className="mrc-metrics-warn-meta">
+                {u.date}
+                {u.sampleId ? ` · 🧪 ${u.sampleId}` : ''}
+              </span>
+              <span className="mrc-metrics-warn-content">{u.content || '（无摘要）'}</span>
+              <button
+                type="button"
+                className="mrc-btn small"
+                disabled={!u.entryId}
+                onClick={() => onEdit(u.entryId)}
+                title="跳转到实验记录并打开编辑"
+              >
+                ✏️ 补标注
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function fmtTemp(t: number, u?: string | null): string {
   if (u === 'C') return `${t}°C`;
   return `${t}${u || ''}`;
@@ -175,41 +210,15 @@ export function MetricsPanel({ state, onStateChange, showToast, onEditWorklog }:
   };
 
   // 未识别体系警告条（规格 3.4）：不进图、不计指标，提示补标注
-  const warnBar =
-    unrecognized.length > 0 ? (
-      <div className="mrc-panel-section mrc-metrics-warn">
-        <button
-          type="button"
-          className="mrc-metrics-warn-head"
-          onClick={() => setShowUnrecognized((v) => !v)}
-        >
-          <span>⚠️ {unrecognized.length} 条实验记录未识别材料体系</span>
-          <span className="mrc-metrics-warn-toggle">{showUnrecognized ? '▾' : '▸'}</span>
-        </button>
-        {showUnrecognized && (
-          <div className="mrc-metrics-warn-list">
-            {unrecognized.map((u, i) => (
-              <div key={u.entryId || i} className="mrc-metrics-warn-item">
-                <span className="mrc-metrics-warn-meta">
-                  {u.date}
-                  {u.sampleId ? ` · 🧪 ${u.sampleId}` : ''}
-                </span>
-                <span className="mrc-metrics-warn-content">{u.content || '（无摘要）'}</span>
-                <button
-                  type="button"
-                  className="mrc-btn small"
-                  disabled={!u.entryId}
-                  onClick={() => onEditWorklog?.(u.entryId)}
-                  title="跳转到实验记录并打开编辑"
-                >
-                  ✏️ 补标注
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    ) : null;
+  const warnBar = (
+    <UnrecognizedWarnBar
+      count={unrecognized.length}
+      items={unrecognized}
+      open={showUnrecognized}
+      onToggle={() => setShowUnrecognized((v) => !v)}
+      onEdit={(entryId) => onEditWorklog?.(entryId)}
+    />
+  );
 
   if (loading) {
     return (
@@ -232,8 +241,13 @@ export function MetricsPanel({ state, onStateChange, showToast, onEditWorklog }:
             <span className="mrc-section-title">指标趋势</span>
           </div>
           <div className="mrc-empty">
-            还没有可绘制的性能指标。在实验记录的「实验数据」里写下类似
-            <code>ZT=0.9 @ 823K</code>、<code>功率因子=1.2</code> 的参数，AI 巡检会自动抽取并汇总成趋势曲线。
+            还没有性能指标参数。在实验记录的「实验数据」里写下如
+            <code>ZT=0.9 @ 823K</code>、<code>功率因子=1.2</code> 即可，AI 巡检会自动抽取并汇总成趋势曲线。
+            <div className="mrc-empty-example">
+              <span className="mrc-chip mini">ZT @ 823K</span>
+              <span className="mrc-chip mini">功率因子</span>
+              <span className="mrc-chip mini">Seebeck 系数</span>
+            </div>
           </div>
         </div>
       </div>

@@ -15,16 +15,17 @@ let running = false; // 进程内并发锁：同一时刻只跑一轮巡检
 
 const BATCH_MAX = 3; // 每轮最多巡检条数（每条一次 LLM 调用）
 
+/** @returns {string} */
 function localToday() {
   const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
+  const pad = (/** @type {number} */ n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /**
- * @param {object} ctx 宿主上下文
- * @param {object} store 数据存储
- * @param {object} options { force }  force=true 时重巡检最近 BATCH_MAX 条
+ * @param {import("./types.js").ToolCtx} ctx 宿主上下文
+ * @param {import("./types.js").StoreApi} store 数据存储
+ * @param {{ force?: boolean }} [options] force=true 时重巡检最近 BATCH_MAX 条
  */
 export async function triageWorklog(ctx, store, { force = false } = {}) {
   if (running) return { skipped: true };
@@ -60,14 +61,15 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
     let triaged = 0;
     let updated = 0;
     let reviewedAt = since; // 逐条推进水位线：失败的条目不推进
-    const successIds = []; // 本轮成功巡检的条目 id（写回 aiReviewedIds 供同毫秒补捞判重）
+    /** @type {string[]} */ // 本轮成功巡检的条目 id（写回 aiReviewedIds 供同毫秒补捞判重）
+    const successIds = [];
 
     for (const entry of pending) {
       let out;
       try {
         out = await triageWorkEntry(ctx, { entries: [entry], gantt, literature, today });
       } catch (err) {
-        ctx?.log?.warn(`triageWorklog [${entry.id}] LLM 失败，保留待重试: ${err?.message || err}`);
+        ctx?.log?.warn(`triageWorklog [${entry.id}] LLM 失败，保留待重试: ${err instanceof Error ? err.message : String(err)}`);
         break; // 本条失败 → 后续条目不处理，水位线停在已成功处
       }
       if (!out) {
@@ -83,7 +85,7 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
       if (out.fields.length > 0 || out.citations.length > 0 || systemChanged) {
         try {
           store.update("worklog", undefined, (cur) => ({
-            entries: (cur.entries || []).map((e) =>
+            entries: /** @type {any[]} */(cur.entries || []).map((e) =>
               e.id === entry.id
                 ? {
                     ...e,
@@ -96,7 +98,7 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
           }));
           updated += 1;
         } catch (err) {
-          ctx?.log?.warn(`triageWorklog worklog enrich failed: ${err?.message || err}`);
+          ctx?.log?.warn(`triageWorklog worklog enrich failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
@@ -104,7 +106,7 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
       if (out.durationHours && !entry.durationHours) {
         try {
           store.update("worklog", undefined, (cur) => ({
-            entries: (cur.entries || []).map((e) =>
+            entries: /** @type {any[]} */(cur.entries || []).map((e) =>
               e.id === entry.id
                 ? { ...e, durationHours: out.durationHours, ...(out.startDate ? { startDate: out.startDate } : {}) }
                 : e
@@ -112,7 +114,7 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
           }));
           updated += 1;
         } catch (err) {
-          ctx?.log?.warn(`triageWorklog duration enrich failed: ${err?.message || err}`);
+          ctx?.log?.warn(`triageWorklog duration enrich failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
@@ -120,11 +122,11 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
       for (const tp of out.taskProgress) {
         try {
           store.update("gantt", undefined, (cur) => ({
-            tasks: (cur.tasks || []).map((t) => (t.id === tp.taskId ? { ...t, progress: tp.progress } : t)),
+            tasks: /** @type {any[]} */(cur.tasks || []).map((t) => (t.id === tp.taskId ? { ...t, progress: tp.progress } : t)),
           }));
           updated += 1;
         } catch (err) {
-          ctx?.log?.warn(`triageWorklog gantt progress failed: ${err?.message || err}`);
+          ctx?.log?.warn(`triageWorklog gantt progress failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
@@ -144,7 +146,7 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
           ]);
           updated += 1;
         } catch (err) {
-          ctx?.log?.warn(`triageWorklog calendar append failed: ${err?.message || err}`);
+          ctx?.log?.warn(`triageWorklog calendar append failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
@@ -154,7 +156,7 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
     // 推进水位线（仅已成功巡检的条目不重跑；aiReviewedIds 记录水位线时刻已处理的 id）
     if (triaged > 0) {
       store.update("worklog", undefined, (cur) => {
-        const entries = cur.entries || [];
+        const entries = /** @type {any[]} */ (cur.entries || []);
         const prevIds = Array.isArray(cur.meta?.aiReviewedIds) ? cur.meta.aiReviewedIds : [];
         const tickIds = new Set(entries.filter((e) => String(e.createdAt || "") === reviewedAt).map((e) => e.id));
         const kept = [...new Set([...prevIds, ...successIds])].filter((id) => tickIds.has(id));

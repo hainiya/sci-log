@@ -151,8 +151,8 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 
 /* widget 窄条模式 */
 .mrc-widget { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
-.mrc-widget .mrc-dashboard { grid-template-columns: 1fr 1fr; padding: 0; }
-.mrc-widget .mrc-dash-week { display: none; }
+.mrc-widget .mrc-dashboard { grid-template-columns: 1fr; padding: 0; }
+.mrc-widget .mrc-dash-week { display: flex; flex-direction: column; }
 
 /* 通用区块卡片 */
 .mrc-panel-section {
@@ -272,8 +272,13 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 
 /* 实验记录 */
 .mrc-worklog-search { width: auto; flex: 1; min-width: 160px; }
-.mrc-list { display: flex; flex-direction: column; gap: 6px; max-height: 55vh; overflow-y: auto; }
-.mrc-log-entry { border: 1px solid var(--mrc-border); border-radius: 8px; padding: 8px; }
+.mrc-list { display: flex; flex-direction: column; gap: 10px; max-height: 55vh; overflow-y: auto; padding: 4px 2px; }
+.mrc-log-entry {
+  border: 1px solid var(--mrc-border); border-radius: 8px; padding: 8px;
+  border-left: 3px solid transparent; transition: border-color 0.15s, background 0.15s;
+}
+.mrc-log-entry:hover { border-left-color: var(--mrc-accent); background: var(--mrc-bg-card); }
+.mrc-log-entry.editing { border-color: var(--mrc-accent); border-left-color: var(--mrc-accent); background: var(--mrc-accent-soft); }
 .mrc-log-head { display: flex; gap: 8px; font-size: 11px; color: var(--mrc-text-dim); align-items: center; }
 .mrc-log-date { color: var(--mrc-accent); }
 .mrc-log-sample { color: var(--mrc-accent); }
@@ -555,3 +560,62 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
   border-color: rgba(46, 158, 91, 0.45);
   background: rgba(46, 158, 91, 0.08);
 }
+
+/* ===== UI 打磨 v3（Dashboard 去重 / 甘特图例 / 日历实验标记 / 表单分组 / 文献状态徽标 / 指标警告降级） ===== */
+/* widget 精简 dashboard：今日状态行 */
+.mrc-dash-compact .mrc-dash-week { padding: 8px 10px; }
+.mrc-dash-todayline {
+  display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--mrc-text-dim); margin-top: 6px;
+  border-top: 1px dashed var(--mrc-border); padding-top: 6px;
+}
+
+/* 甘特图例 */
+.mrc-gantt-legend { display: inline-flex; align-items: center; gap: 10px; font-size: 10.5px; color: var(--mrc-text-dim); margin-left: 8px; flex-wrap: wrap; }
+.mrc-gantt-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.mrc-gantt-legend-item .sw { width: 12px; height: 8px; border-radius: 2px; display: inline-block; }
+.mrc-gantt-legend-item .sw.plan { background: var(--mrc-accent-soft); border: 1px solid var(--mrc-accent); }
+.mrc-gantt-legend-item .sw.progress { background: var(--mrc-accent); opacity: 0.55; }
+.mrc-gantt-legend-item .sw.actual { background: var(--mrc-actual, #2e9e6b); opacity: 0.55; }
+
+/* 日历实验记录圆点 */
+.mrc-cal-work-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--mrc-actual, #2e9e6b); margin-left: 4px; vertical-align: middle;
+}
+
+/* 表单分组 */
+.mrc-form-group { border: 1px solid var(--mrc-border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.mrc-form-group-title { font-size: 12px; font-weight: 600; color: var(--mrc-accent); letter-spacing: 0.3px; }
+
+/* 空态示例 chips */
+.mrc-empty-example { margin-top: 8px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+
+/* 文献 Zotero 状态徽标（彩色区分在线/离线） */
+.mrc-zotero-status.ok { color: var(--mrc-ok, #2e9e5b); font-weight: 600; }
+.mrc-zotero-status.off { color: var(--mrc-danger, #d64541); }
+
+/* 指标趋势未识别体系警告（降级：中性浅色 + 左侧红条，不再整行大横幅） */
+.mrc-metrics-warn {
+  border: 1px solid var(--mrc-border);
+  background: var(--mrc-bg);
+  border-left: 3px solid var(--mrc-danger, #d64541);
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+/* ===== UI v4：实验记录重定位 + 日程布局重排 ===== */
+/* 实验记录「手动记录」折叠头（AI 记录为主，手动仅补充/纠错） */
+.mrc-accordion-head {
+  border: none; background: transparent; color: inherit;
+  display: flex; align-items: center; gap: 10px; cursor: pointer;
+  font-family: inherit; padding: 0; text-align: left; width: 100%;
+}
+.mrc-accordion-head .mrc-hint { color: var(--mrc-text-dim); font-size: 11px; }
+.mrc-accordion-toggle { margin-left: auto; color: var(--mrc-accent); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.mrc-accordion-head:hover .mrc-accordion-toggle { text-decoration: underline; }
+
+/* 日程：甘特图占满整行、任务清单移到底部紧凑区块，消除左右挤占 */
+.mrc-schedule.mrc-schedule-stacked { grid-template-columns: 1fr; }
+.mrc-task-panel { max-height: 300px; }
+.mrc-task-panel .mrc-tasklist { max-height: 220px; }

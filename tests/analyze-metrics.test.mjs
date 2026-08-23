@@ -5,22 +5,7 @@
  * 测试数据用 buildMetricsSeries 构造：两条 SnSe（ZT 823K / 300K）、一条 Bi₂Te₃（ZT 400K）。
  */
 import { buildMetricsSeries, filterSeries } from '../src-server/server/metrics.js';
-
-let pass = 0;
-let fail = 0;
-function assert(cond, msg) {
-  if (cond) {
-    pass += 1;
-  } else {
-    fail += 1;
-    console.error('  ✗ FAIL:', msg);
-  }
-}
-assert.equal = (actual, expected, msg) =>
-  assert(actual === expected, `${msg}（期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}）`);
-assert.ok = (cond, msg) => assert(cond, msg);
-assert.deepEqual = (actual, expected, msg) =>
-  assert(JSON.stringify(actual) === JSON.stringify(expected), `${msg}（期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}）`);
+import { assert, assertFinish, assertSummary } from './helpers/assert.mjs';
 
 // 构造测试数据：两条 SnSe（ZT 823K / 300K）、一条 Bi₂Te₃（ZT 400K），日期 08-05 / 08-06
 // createdAt 用 UTC 毫秒（store.now() 即 toISOString），数值取本地日期对应的 UTC 凌晨时刻，
@@ -157,5 +142,5 @@ assert.equal(data.metrics.zt.systems['Bi₂Te₃'].length, 1, '前置：Bi₂Te�
   }
 }
 
-console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
-process.exit(fail === 0 ? 0 : 1);
+console.log(`\n结果: ${assertSummary()} `);
+assertFinish();

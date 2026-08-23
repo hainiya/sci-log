@@ -4,22 +4,7 @@
  * 文献基准、fields 形态兼容（数组/对象）、无匹配返回空。
  */
 import { buildMetricsSeries, extractLiteratureBaseline, filterSeries } from '../src-server/server/metrics.js';
-
-let pass = 0;
-let fail = 0;
-function assert(cond, msg) {
-  if (cond) {
-    pass += 1;
-  } else {
-    fail += 1;
-    console.error('  ✗ FAIL:', msg);
-  }
-}
-assert.equal = (actual, expected, msg) =>
-  assert(actual === expected, `${msg}（期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}）`);
-assert.ok = (cond, msg) => assert(cond, msg);
-assert.deepEqual = (actual, expected, msg) =>
-  assert(JSON.stringify(actual) === JSON.stringify(expected), `${msg}（期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}）`);
+import { assert, assertFinish, assertSummary } from './helpers/assert.mjs';
 
 const worklog = [
   // SnSe：fields 数组 + 双指标(ZT/PF) + 温度
@@ -440,5 +425,5 @@ assert(base.zt.value === 2.5, 'extractLiteratureBaseline: 取 record 最大值 2
   assert.equal(b.zt.tempUnit, 'K');
 }
 
-console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
-process.exit(fail === 0 ? 0 : 1);
+console.log(`\n结果: ${assertSummary()} `);
+assertFinish();

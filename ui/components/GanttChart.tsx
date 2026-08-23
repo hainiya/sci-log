@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { dayIndex, addDays, fmt } from '../lib/dates';
 
 export type GanttTask = {
   id: string;
@@ -38,23 +39,6 @@ const ZOOMS = {
 } as const;
 type ZoomKey = keyof typeof ZOOMS;
 
-function dayIndex(dateStr: string | null, min: Date) {
-  if (!dateStr) return 0;
-  const d = new Date(dateStr);
-  return Math.max(0, Math.round((d.getTime() - min.getTime()) / 86400000));
-}
-
-function addDays(base: Date, days: number) {
-  const d = new Date(base);
-  d.setDate(d.getDate() + days);
-  return d;
-}
-
-function fmt(d: Date) {
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
-}
 
 export function GanttChart({ tasks, actuals = [], onSave }: Props) {
   const [zoom, setZoom] = useState<ZoomKey>('month');
@@ -198,6 +182,12 @@ export function GanttChart({ tasks, actuals = [], onSave }: Props) {
     if (el) el.scrollLeft = Math.max(0, todayX - el.clientWidth / 2);
   };
 
+  // 进入时默认定位到「今天」附近（避免停在时间轴最左端，看到一屏过去的历史）
+  useEffect(() => {
+    scrollToToday();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom]);
+
   return (
     <div className="mrc-gantt">
       <div className="mrc-gantt-toolbar">
@@ -209,6 +199,11 @@ export function GanttChart({ tasks, actuals = [], onSave }: Props) {
           ))}
         </div>
         <button className="mrc-btn small" onClick={scrollToToday}>◎ 回到今天</button>
+        <span className="mrc-gantt-legend">
+          <span className="mrc-gantt-legend-item"><i className="sw plan" />计划任务</span>
+          <span className="mrc-gantt-legend-item"><i className="sw progress" />进度</span>
+          <span className="mrc-gantt-legend-item"><i className="sw actual" />实际时间线</span>
+        </span>
         <span className="mrc-hint">拖动改期 · 两端缩放 · 双击编辑</span>
       </div>
       <div className="mrc-gantt-scroll" ref={scrollRef}>
@@ -244,13 +239,27 @@ export function GanttChart({ tasks, actuals = [], onSave }: Props) {
                   {task.kind === 'actual' ? '◆ ' : ''}{task.name}
                 </text>
                 {task.kind === 'actual' ? (
-                  <rect
-                    x={x} y={y} width={w} height={BAR_HEIGHT} rx={5}
-                    fill="var(--mrc-actual, #2e9e6b)"
-                    opacity={0.55}
-                  >
-                    <title>{`${task.name}（实际时间线）`}</title>
-                  </rect>
+                  <g>
+                    <rect
+                      x={x} y={y} width={w} height={BAR_HEIGHT} rx={5}
+                      fill="var(--mrc-actual, #2e9e6b)"
+                      opacity={0.55}
+                    >
+                      <title>{`${task.name}（实际时间线）`}</title>
+                    </rect>
+                    {w > 70 && task.name && (
+                      <text
+                        x={x + 6}
+                        y={y + BAR_HEIGHT / 2 + 3}
+                        fontSize={10}
+                        fill="#fff"
+                        opacity={0.9}
+                        pointerEvents="none"
+                      >
+                        {task.name.slice(0, Math.max(3, Math.floor((w - 14) / 7)))}
+                      </text>
+                    )}
+                  </g>
                 ) : (
                   <>
                     <rect
@@ -273,8 +282,8 @@ export function GanttChart({ tasks, actuals = [], onSave }: Props) {
                   </>
                 )}
                 {task.kind === 'actual'
-                  ? <text x={x + w + 6} y={y + BAR_HEIGHT / 2 + 4} fontSize={11} fill="var(--mrc-actual, #2e9e6b)">实 · {Math.max(1, row.endDay - row.startDay + 1)} 天</text>
-                  : <text x={x + w + 6} y={y + BAR_HEIGHT / 2 + 4} fontSize={11} fill="var(--mrc-text-dim, #888)">{task.progress || 0}%{task.dependsOn?.length ? ` · 依赖${task.dependsOn.length}` : ''}</text>}
+                  ? <text x={x + w + 6} y={y + BAR_HEIGHT / 2 + 4} fontSize={11} fill="var(--mrc-actual, #2e9e6b)">实际 {Math.max(1, row.endDay - row.startDay + 1)} 天</text>
+                  : <text x={x + w + 6} y={y + BAR_HEIGHT / 2 + 4} fontSize={11} fill="var(--mrc-text-dim, #888)">{task.progress || 0}%</text>}
               </g>
             );
           })}

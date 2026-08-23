@@ -9,22 +9,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createStore } from "../server/store.js";
+import { safeName, renderWorklogMarkdown } from "../server/export-util.js";
 
 const EXPORT_DIR = "exports";
 
-function safeName(value) {
-  return String(value || "export")
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60) || "export";
-}
-
+/**
+ * @param {any} app
+ * @param {import("../server/types.js").ToolCtx} ctx
+ */
 export default function registerExportRoutes(app, ctx) {
   const store = createStore(ctx.dataDir);
+  // stageFile 由宿主 plugin-context 提供（spike③ 已验证），本地断言为非可选避免逐点可选链
+  const stageFile = /** @type {(input: Record<string, any>) => any} */ (ctx.stageFile);
 
   // E1：待整理批量 RIS（非 Zotero 条目进入 Zotero 的唯一通道；9.x 无写 API）
-  app.post("/export/ris-batch", async (c) => {
+  app.post("/export/ris-batch", async (/** @type {any} */ c) => {
     const literature = store.read("literature");
     const entries = (literature.entries || []).filter((e) => e.source !== "zotero");
     if (entries.length === 0) return c.json({ error: "no_to_organize", hint: "待整理分组为空：非 Zotero 条目均已归类" }, 404);
@@ -40,14 +39,15 @@ export default function registerExportRoutes(app, ctx) {
       fs.mkdirSync(outputDir, { recursive: true });
       const filePath = path.join(outputDir, `to-organize-${store.now().slice(0, 10)}.ris`);
       fs.writeFileSync(filePath, content, "utf-8");
-      const staged = ctx.stageFile({ sessionId, sessionPath, filePath, label: path.basename(filePath) });
+      const staged = stageFile({ sessionId, sessionPath, filePath, label: path.basename(filePath) });
       return c.json({ ok: true, count: entries.length, file: { fileId: staged?.file?.fileId, label: path.basename(filePath) } });
     } catch (err) {
-      ctx.log.error("ris-batch stage failed:", err.message);
-      return c.json({ error: "stage_failed", detail: err.message }, 500);
+      ctx.log?.error("ris-batch stage failed:", /** @type {Error} */ (err).message);
+      return c.json({ error: "stage_failed", detail: /** @type {Error} */ (err).message }, 500);
     }
   });
 
+  /** @param {import("../server/types.js").LiteratureEntry} e @returns {string} */
   function renderRis(e) {
     const lines = [];
     lines.push("TY  - JOUR");
@@ -63,7 +63,7 @@ export default function registerExportRoutes(app, ctx) {
     return lines.join("\n") + "\n";
   }
 
-  app.get("/export/:type", async (c) => {
+  app.get("/export/:type", async (/** @type {any} */ c) => {
     const type = c.req.param("type");
     const id = c.req.query("id") || null;
     // 投递目标：优先请求里的 surface session（未来宿主扩展），否则用绑定会话
@@ -87,31 +87,16 @@ export default function registerExportRoutes(app, ctx) {
     let ext = ".md";
 
     try {
-      if (type === "review") {
-        const reviews = store.read("reviews");
-        const review = id
-          ? (reviews.entries || []).find((r) => r.id === id)
-          : (reviews.entries || []).at(-1);
-        if (!review) return c.json({ error: "no_review", hint: "还没有审查报告，先在对话中说『审查我的研究进展』" }, 404);
-        content = renderReview(review);
-        label = `审查报告-${review.date ? review.date.slice(0, 10) : "latest"}.md`;
-      } else if (type === "report") {
-        const report = store.read("report");
-        if (!report?.content) {
-          return c.json({ error: "no_report", hint: "文献分析报告尚未生成，请在面板左栏点击『🔄 更新报告』" }, 404);
-        }
-        content = report.content;
-        label = "文献分析报告.md";
-      } else if (type === "worklog") {
+      if (type === "worklog") {
         const worklog = store.read("worklog");
-        content = renderWorklog(worklog.entries || []);
+        content = renderWorklogMarkdown(worklog.entries || []);
         label = `实验记录-${store.now().slice(0, 10)}.md`;
       } else {
-        return c.json({ error: "invalid_type", hint: "type 支持 review | report | worklog（E1 后 BibTeX 全库已退役）" }, 400);
+        return c.json({ error: "invalid_type", hint: "type 支持 worklog（review/report 已随研究方案/提案移除）" }, 400);
       }
     } catch (err) {
-      ctx.log.error("export build failed:", err.message);
-      return c.json({ error: "export_failed", detail: err.message }, 500);
+      ctx.log?.error("export build failed:", /** @type {Error} */ (err).message);
+      return c.json({ error: "export_failed", detail: /** @type {Error} */ (err).message }, 500);
     }
 
     // 生成文件 → stageFile 投递 SessionFile
@@ -120,7 +105,7 @@ export default function registerExportRoutes(app, ctx) {
       fs.mkdirSync(outputDir, { recursive: true });
       const filePath = path.join(outputDir, safeName(label.replace(/\.[a-z]+$/i, "")) + ext);
       fs.writeFileSync(filePath, content, "utf-8");
-      const staged = ctx.stageFile({
+      const staged = stageFile({
         sessionId,
         sessionPath,
         filePath,
@@ -134,38 +119,8 @@ export default function registerExportRoutes(app, ctx) {
         },
       });
     } catch (err) {
-      ctx.log.error("export stage failed:", err.message);
-      return c.json({ error: "stage_failed", detail: err.message }, 500);
+      ctx.log?.error("export stage failed:", /** @type {Error} */ (err).message);
+      return c.json({ error: "stage_failed", detail: /** @type {Error} */ (err).message }, 500);
     }
   });
-
-  function renderReview(review) {
-    const lines = [];
-    lines.push(`# 审查报告`);
-    lines.push("");
-    lines.push(`- 日期：${review.date || ""}`);
-    lines.push(`- 审查对象：${review.target || "研究进展"}`);
-    lines.push("");
-    lines.push(String(review.report || ""));
-    return lines.join("\n") + "\n";
-  }
-
-  function renderWorklog(entries) {
-    const lines = ["# 实验记录", ""];
-    for (const entry of entries || []) {
-      lines.push(`## ${entry.date || ""}${entry.taskId ? `（任务：${entry.taskId}）` : ""}`);
-      lines.push("");
-      lines.push(String(entry.content || ""));
-      if (entry.data) {
-        lines.push("");
-        lines.push("**数据**");
-        lines.push("");
-        lines.push("```");
-        lines.push(String(entry.data).slice(0, 2000));
-        lines.push("```");
-      }
-      lines.push("");
-    }
-    return lines.join("\n");
-  }
 }

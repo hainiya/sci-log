@@ -20,10 +20,21 @@
  *   识别不到 → totals.unrecognized（不进图、不计指标），供面板提示补标注。
  */
 
+/**
+ * @typedef {object} MetricDef
+ * @property {string} key
+ * @property {string} label
+ * @property {string} unit
+ * @property {{base?: string, variants?: Record<string, number>}} [unitNorm]
+ * @property {RegExp} keyRe
+ * @property {RegExp} valueRe
+ */
+
 /** 规范指标字典：key 稳定、label/unit 用于面板展示、keyRe 命中字段键、valueRe 兜底 entry.data、unitNorm 单位归一化 */
 // CN_RE：指标关键词与数值之间的可选连接词（"ZT of 2.5" / "功率因子 达到 2.0" / "Seebeck系数为 210" 等）
 const CN_RE = '(?:of|达到|为|是|[:=])?';
 
+/** @type {MetricDef[]} */
 export const METRIC_DEFS = [
   {
     key: 'zt',
@@ -115,21 +126,31 @@ const SYSTEM_DEFS = [
   { name: '无机/有机复合', aliases: [/杂化/i, /复合/i, /hybrid/i, /composite/i] },
 ];
 
+export const SYSTEM_NAMES = SYSTEM_DEFS.map((s) => s.name);
+
 const UNLABELED = '未标注';
 
+/**
+ * @param {any} fields fields 数组（[{k,v}]）或对象（{k:v}）
+ * @returns {Record<string, string>}
+ */
 function normalizeFields(fields) {
   if (Array.isArray(fields)) {
+    /** @type {Record<string, string>} */
     const out = {};
     for (const f of fields) {
       if (f && typeof f.k === 'string' && f.k.trim()) out[f.k.trim()] = String(f.v ?? '').trim();
     }
     return out;
   }
-  if (fields && typeof fields === 'object') return fields;
+  if (fields && typeof fields === 'object') return /** @type {Record<string, string>} */ (fields);
   return {};
 }
 
-/** 科学计数法归一：1.2×10^19 / 1.2x10^19 / 1.2*10^19 / 1.2e19 / 1.2E19 统一可被 parseFloat 直接解析 */
+/** 科学计数法归一：1.2×10^19 / 1.2x10^19 / 1.2*10^19 / 1.2e19 / 1.2E19 统一可被 parseFloat 直接解析
+ * @param {unknown} str
+ * @returns {string}
+ */
 function normalizeSci(str) {
   return String(str || '')
     .replace(/×\s*10\s*\^/gi, 'e')
@@ -137,6 +158,10 @@ function normalizeSci(str) {
     .replace(/\*\s*10\s*\^/gi, 'e');
 }
 
+/**
+ * @param {any} entry
+ * @returns {{ ts: number, date: string }}
+ */
 function entryDate(entry) {
   const raw = entry?.createdAt || entry?.date;
   if (raw) {
@@ -148,6 +173,7 @@ function entryDate(entry) {
   return { ts: 0, date: String(entry?.date || '') };
 }
 
+/** @param {Date} d @returns {string} */
 function fmtDate(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -156,7 +182,10 @@ function fmtDate(d) {
 }
 
 /** 在文本片段中匹配测试温度并统一归一为整数 K（550°C → 823K）。数字前不允许是数字或小数点，避免「38 mV/K」被误抽为 38K。
- * 归一理由：K/°C 双标度混存会让同一物理温度在筛选（精确匹配）与连线（temp 相等）中互相不可见。 */
+ * 归一理由：K/°C 双标度混存会让同一物理温度在筛选（精确匹配）与连线（temp 相等）中互相不可见。
+ * @param {string} str
+ * @returns {{temp: number, unit: string}|null}
+ */
 function matchTemp(str) {
   const k = str.match(/(?:^|[^\d.])@?\s*(\d{2,4})\s*°?\s*K\b/i);
   if (k) return { temp: Number(k[1]), unit: 'K' };
@@ -167,7 +196,11 @@ function matchTemp(str) {
 
 /** 在 atIndex 附近 ±40 字窗口内抽取测试温度；优先值之后的窗口（避免「ZT=0.9 @ 823K，ZT=0.5 @ 300K」第二个点误取 823K）。
  * atIndex 约定为数值末尾（匹配 m[0] 可能含前导换行/标点，不能直接用 exec.index）。
- * 窗口截断在行边界（\n）：data 多行文本时不同行的温度不串扰（「电导率=620S/m」不会误取上一行「ZT=0.7@823K」）。 */
+ * 窗口截断在行边界（\n）：data 多行文本时不同行的温度不串扰（「电导率=620S/m」不会误取上一行「ZT=0.7@823K」）。
+ * @param {string} str
+ * @param {number|null} atIndex
+ * @returns {{temp: number, unit: string}|null}
+ */
 function extractTemp(str, atIndex) {
   if (typeof str !== 'string' || !str) return null;
   if (atIndex != null) {
@@ -222,7 +255,10 @@ function parseValueUnit(str, metric, anchor) {
   return { value: Number(num.toPrecision(12)), unit: null, raw };
 }
 
-/** 记录级测试温度：字段 key 精确为「测试温度」或「温度」才收（避免烧结温度/真空退火温度等含「温度」的工艺字段被当作测试条件） */
+/** 记录级测试温度：字段 key 精确为「测试温度」或「温度」才收（避免烧结温度/真空退火温度等含「温度」的工艺字段被当作测试条件）
+ * @param {Record<string, string>} fieldsObj
+ * @returns {{temp: number, unit: string}|null}
+ */
 function recordLevelTemp(fieldsObj) {
   for (const [k, v] of Object.entries(fieldsObj || {})) {
     if (!/^(测试温度|温度)$/.test(String(k).trim())) continue;
@@ -234,7 +270,11 @@ function recordLevelTemp(fieldsObj) {
 
 /** 体系识别：entry.system 显式字段优先；兜底 SYSTEM_DEFS 扫 fields 值 + data + content。
  * content 按 [。；;\n] 分句，剔除引用语境句（对比/文献/参考/综述…），再参与匹配——
- * 「配置Bi2Te3单晶生长」可识别，「与 SnSe 文献对比，本炉失败」不误判。 */
+ * 「配置Bi2Te3单晶生长」可识别，「与 SnSe 文献对比，本炉失败」不误判。
+ * @param {any} entry
+ * @param {Record<string, string>} fieldsObj
+ * @returns {string}
+ */
 function detectSystem(entry, fieldsObj) {
   const explicit = entry?.system;
   if (explicit != null && String(explicit).trim()) return String(explicit).trim();
@@ -256,7 +296,10 @@ function detectSystem(entry, fieldsObj) {
   return UNLABELED;
 }
 
-/** 从正则匹配结果取最后一个数值捕获组（支持多分支 alternation） */
+/** 从正则匹配结果取最后一个数值捕获组（支持多分支 alternation）
+ * @param {RegExpExecArray|null} m
+ * @returns {number|null}
+ */
 function numFromMatch(m) {
   if (!m) return null;
   for (let i = m.length - 1; i >= 1; i--) {
@@ -269,11 +312,18 @@ function numFromMatch(m) {
   return null;
 }
 
+/** @param {unknown} str @param {number} max @returns {string} */
 function summarize(str, max) {
   const s = String(str || '').trim().replace(/\s+/g, ' ');
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
+/**
+ * @param {Record<string, any>} series
+ * @param {{key: string, label: string, unit: string}} metric
+ * @param {string} system
+ * @param {any} point
+ */
 function pushPoint(series, metric, system, point) {
   let m = series[metric.key];
   if (!m) {
@@ -287,12 +337,16 @@ function pushPoint(series, metric, system, point) {
 
 /**
  * 核心：从实验记录构建指标时间序列。
- * @returns {{ ok:true, metrics:object, order:string[], baseline:object,
- *             totals:{entries:number, withMetrics:number, unrecognized:Array<{entryId, date, sampleId, content}>} }}
+ * @param {import("./types.js").WorklogEntry[]} worklogEntries
+ * @param {import("./types.js").LiteratureEntry[]} [literatureEntries]
+ * @returns {{ ok:true, metrics:Record<string, any>, order:string[], baseline:Record<string, any>,
+ *             totals:{entries:number, withMetrics:number, unrecognized:Array<{entryId: string|null, date: string, sampleId: string|null, content: string}>} }}
  */
 export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) {
+  /** @type {Record<string, any>} */
   const series = {};
   const withMetrics = new Set();
+  /** @type {Array<{entryId: (string|null), date: string, sampleId: (string|null), content: string}>} */
   const unrecognized = [];
   const seen = new Set();
 
@@ -304,6 +358,7 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
     const isUnlabeled = system === UNLABELED;
 
     // 去重：同 entryId + 指标 + 温度 + 值 只收一个（fields 与 data 双抽、重复书写均不重复计）
+    /** @type {(metric: any, point: any) => void} */
     const addPoint = (metric, point) => {
       const dk = `${e?.id || ''}|${metric.key}|${point.temp ?? ''}|${point.tempUnit ?? ''}|${point.value}`;
       if (seen.has(dk)) return;
@@ -400,13 +455,14 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
     }
   }
 
+  /** @type {Record<string, any>} */
   const metrics = {};
   const order = [];
   for (const def of METRIC_DEFS) {
     const m = series[def.key];
     if (!m) continue;
     for (const sys of Object.keys(m.systems)) {
-      m.systems[sys].sort((a, b) => a.ts - b.ts);
+      /** @type {any[]} */ (m.systems[sys]).sort((a, b) => a.ts - b.ts);
     }
     metrics[def.key] = m;
     order.push(def.key);
@@ -431,9 +487,11 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
  * 从文献库抽取基准值：仅当数值出现在 record/peak/最高 等语境下才计入，
  * 取同指标所有命中中的最大值。保守，避免把正文任意提及的数值当成基准。
  * 顺带抽取基线值的测试温度（@823K / at 823 K / at 650 °C，°C 归一为 K），供面板提示温度可比性。
+ * @param {import("./types.js").LiteratureEntry[]} [literatureEntries]
  * @returns {Record<string, {value: number, temp: (number|null), tempUnit: (string|null)}|null>}
  */
 export function extractLiteratureBaseline(literatureEntries = []) {
+  /** @type {Record<string, {value: number, temp: number|null, tempUnit: string|null}|null>} */
   const baseline = {};
   const RECORD_CTX =
     /最高|记录|record|peak|state[- ]of[- ]the[- ]art|可达|up to|高达|创|突破|最优|benchmark|world/i;
@@ -477,13 +535,15 @@ export function extractLiteratureBaseline(literatureEntries = []) {
  */
 export function filterSeries(data, opts = {}) {
   const { metric, system, temp, from, to } = opts || {};
+  /** @type {Record<string, any>} */
   const metrics = {};
   for (const [mk, m] of Object.entries(data?.metrics || {})) {
     if (metric && mk !== metric) continue;
+    /** @type {Record<string, any[]>} */
     const systems = {};
     for (const [sk, pts] of Object.entries(m.systems || {})) {
       if (system && sk !== system) continue;
-      const filtered = pts.filter((p) => {
+      const filtered = /** @type {any[]} */ (pts).filter((/** @type {any} */ p) => {
         if (temp != null && p.temp !== Number(temp)) return false;
         if (from) { const t = new Date(from).getTime(); if (!Number.isNaN(t) && p.ts < t) return false; }
         if (to) { const t = new Date(to).getTime(); if (!Number.isNaN(t) && p.ts > t) return false; }

@@ -7,16 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createStore } from "../server/store.js";
 import { ensureAutoBinding } from "../server/binding.js";
-
-function safeName(value) {
-  return (
-    String(value || "export")
-      .toLowerCase()
-      .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 60) || "export"
-  );
-}
+import { safeName, renderWorklogMarkdown } from "../server/export-util.js";
 
 export const name = "export_report";
 export const description =
@@ -42,6 +33,11 @@ export const sessionPermission = {
   }),
 };
 
+/**
+ * @param {Record<string, any>} input
+ * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @returns {Promise<any>}
+ */
 export async function execute(input = {}, toolCtx) {
   const sessionRef =
     toolCtx.sessionRef ||
@@ -69,22 +65,7 @@ export async function execute(input = {}, toolCtx) {
   }
 
   const worklog = store.read("worklog");
-  const lines = ["# 实验记录", ""];
-  for (const entry of worklog.entries || []) {
-    lines.push(`## ${entry.date || ""}${entry.taskId ? `（任务：${entry.taskId}）` : ""}`);
-    lines.push("");
-    lines.push(String(entry.content || ""));
-    if (entry.data) {
-      lines.push("");
-      lines.push("**数据**");
-      lines.push("");
-      lines.push("```");
-      lines.push(String(entry.data).slice(0, 2000));
-      lines.push("```");
-    }
-    lines.push("");
-  }
-  const content = lines.join("\n");
+  const content = renderWorklogMarkdown(worklog.entries || []);
   const label = `实验记录-${store.now().slice(0, 10)}.md`;
 
   const outputDir = path.join(toolCtx.dataDir, "exports");

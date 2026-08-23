@@ -10,11 +10,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { sampleText } from "./llm.js";
 import { triageWorklog } from "./triage.js";
+import { newId } from "./ids.js";
+import { parseDraft } from "./worklog-parse.js";
 
-export { parseDraft } from "./worklog-parse.js";
+// 修复：此前仅 `export { parseDraft } from ...`（re-export 不创建本地绑定），
+// generateDraft 内引用 parseDraft 会在运行时抛 ReferenceError（checkJs 捕获）。
+export { parseDraft };
 
 /**
  * 生成实验记录草稿：读 prompt → sampleText → parseDraft。
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {{ text: string, taskList?: Array<{id: string, name: string}> }} input
  * @returns {Promise<null | object>} 草稿对象；prompt 缺失 / 输入为空 / LLM 失败或无法解析时返回 null
  */
 export async function generateDraft(ctx, { text, taskList = [] }) {
@@ -36,11 +42,15 @@ export async function generateDraft(ctx, { text, taskList = [] }) {
     maxTokens: 700,
     temperature: 0.3,
   });
-  return parseDraft(result?.text);
+  return parseDraft(/** @type {any} */ (result)?.text);
 }
 
 /**
  * 落库：向 worklog 追加一条 AI 生成的实验记录。
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").StoreApi} store
+ * @param {any} draft
+ * @param {{ sessionPath?: string|null }} [opts]
  * @returns {{ ok: true, id: string } | { ok: false, reason: string, data?: object }}
  */
 export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
@@ -49,7 +59,7 @@ export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
   }
   const nowIso = new Date().toISOString();
   const entry = {
-    id: `work_${Date.now().toString(36)}`,
+    id: newId("work"),
     sampleId: draft.sampleId || null,
     system: draft.system || null,
     date: draft.startDate || new Date().toISOString().slice(0, 10),
@@ -72,7 +82,7 @@ export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
     }));
     if (!res?.ok) return { ok: false, reason: "store_update_failed", data: res?.data };
   } catch (err) {
-    return { ok: false, reason: "store_error", data: { message: err?.message || String(err) } };
+    return { ok: false, reason: "store_error", data: { message: err instanceof Error ? err.message : String(err) } };
   }
   // 落库成功后触发 AI 巡检（manifest autoTriage 承诺）：fire-and-forget，开关与既有调用点对齐
   // （宿主配置优先，回退 settings.json 旧值，与 routes/api.js 的 worklog 写入后巡检一致）
@@ -86,10 +96,14 @@ export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
   return { ok: true, id: entry.id };
 }
 
-/** 读 prompt（与 llm.js 同实现：顶层 import fs/path 的同步读取）。 */
+/** 读 prompt（与 llm.js 同实现：顶层 import fs/path 的同步读取）。
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {string} name
+ * @returns {string}
+ */
 function readPrompt(ctx, name) {
   try {
-    return fs.readFileSync(path.join(ctx.pluginDir, "prompts", name), "utf-8");
+    return fs.readFileSync(path.join(ctx.pluginDir ?? "", "prompts", name), "utf-8");
   } catch {
     return "";
   }

@@ -7,22 +7,38 @@
  */
 import { summarizeFromFulltext, translateAbstract, extractLiteratureKeywords } from "./llm.js";
 import { appendLiteratureLog } from "./literature-log.js";
+import { OpenAlexWorkSchema } from "./schemas.js";
 
 const FAILED_RETRY_COOLDOWN_MS = 24 * 3600 * 1000; // E4：failed 解析 24h 冷却
 const PDF_MAX_CHARS = 100000; // E3：60k→100k 保综述/长文结论段（英文约 4.5k 字符/页，≈22 页）
 const SCAN_THRESHOLD = 200; // 文本量低于该值视为扫描版（需人工补全）
 
-/** E4：failed 冷却判断（无 failedAt 视为可重试） */
+/** E4：failed 冷却判断（无 failedAt 视为可重试）
+ * @param {import("./types.js").LiteratureEntry} entry
+ * @returns {boolean}
+ */
 function failedRetryable(entry) {
   if (entry.fullTextParsed !== "failed") return true;
   const t = entry.failedAt ? new Date(entry.failedAt).getTime() : NaN;
   return !Number.isFinite(t) || Date.now() - t > FAILED_RETRY_COOLDOWN_MS;
 }
+
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").StoreApi} store
+ * @returns {any}
+ */
 export function readSettings(ctx, store) {
   const doc = store.read("settings");
   return doc || { updatedAt: null };
 }
 
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").StoreApi} store
+ * @param {Record<string, any>} patch
+ * @returns {any}
+ */
 export function writeSettings(ctx, store, patch) {
   const current = readSettings(ctx, store);
   const next = { ...current, ...patch, updatedAt: store.now() };
@@ -30,18 +46,22 @@ export function writeSettings(ctx, store, patch) {
   return next;
 }
 
+/** @param {unknown} value @returns {string|null} */
 function parseIsoDate(value) {
   if (!value) return null;
   try {
-    return new Date(value).toISOString();
+    return new Date(/** @type {string} */ (value)).toISOString();
   } catch {
     return null;
   }
 }
 
-/** probe 错误分级（A3）：区分「未运行」/「本地 API 未开启」/「网络异常」 */
+/** probe 错误分级（A3）：区分「未运行」/「本地 API 未开启」/「网络异常」
+ * @param {unknown} err
+ * @returns {"zotero_not_running"|"api_not_enabled"|"network_error"}
+ */
 function classifyProbeError(err) {
-  const msgs = [err?.message, err?.cause?.message, err?.cause?.code, String(err || "")]
+  const msgs = [(/** @type {any} */ (err))?.message, (/** @type {any} */ (err))?.cause?.message, (/** @type {any} */ (err))?.cause?.code, String(err || "")]
     .filter(Boolean)
     .join(" | ");
   if (/ECONNREFUSED|connection refused|refused/i.test(msgs)) return "zotero_not_running";
@@ -49,11 +69,15 @@ function classifyProbeError(err) {
   return "network_error";
 }
 
-/** Zotero 本地 API：探测可用性（显式 UA + 错误分级） */
+/** Zotero 本地 API：探测可用性（显式 UA + 错误分级）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {number|string} port
+ * @returns {Promise<any>}
+ */
 export async function zoteroProbe(ctx, port) {
   let res;
   try {
-    res = await ctx.network.fetch(`http://127.0.0.1:${port}/api/users/0/items?limit=1&format=json`, {
+    res = await ctx.network?.fetch(`http://127.0.0.1:${port}/api/users/0/items?limit=1&format=json`, {
       cacheTtlMs: 0,
       timeoutMs: 3000,
       headers: { "User-Agent": ZOTERO_UA },
@@ -68,7 +92,7 @@ export async function zoteroProbe(ctx, port) {
           ? "Zotero 客户端未运行，请启动桌面客户端"
           : code === "api_not_enabled"
             ? "本地 API 未开启或请求被拒：Zotero → 设置 → 高级 → 允许其他应用与 Zotero 通信（改后需重启 Zotero）"
-            : String(err?.message || "无法访问"),
+            : String(err instanceof Error ? err.message : "无法访问"),
     };
   }
   if (!res.ok) {
@@ -92,18 +116,22 @@ const ZOTERO_ITEM_TYPES = [
 ];
 
 /** Zotero 本地 API 显式 UA：Mozilla 前缀 UA 会被 Zotero 拒绝（实测连接被关闭），必须显式设置 */
-const ZOTERO_UA = "materials-research-copilot/0.1.0";
+const ZOTERO_UA = "materials-research-copilot/0.2.0";
 
-/** Zotero fetch 封装：显式 UA + 403 兜底 zotero-allowed-request */
+/** Zotero fetch 封装：显式 UA + 403 兜底 zotero-allowed-request
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {string} url
+ * @returns {Promise<any>}
+ */
 async function zoteroFetch(ctx, url) {
   const opts = {
     cacheTtlMs: 0,
     timeoutMs: 10000,
     headers: { "User-Agent": ZOTERO_UA },
   };
-  let res = await ctx.network.fetch(url, opts);
+  let res = await ctx.network?.fetch(url, opts);
   if (res.status === 403) {
-    res = await ctx.network.fetch(url, {
+    res = await ctx.network?.fetch(url, {
       ...opts,
       headers: { ...opts.headers, "zotero-allowed-request": "1" },
     });
@@ -119,6 +147,13 @@ async function zoteroFetch(ctx, url) {
  * - { kind: "no_index" } 404/空 content：未索引（新 PDF 异步建索引）或版本不支持 → failedAt 冷却重试
  * - { kind: "api_error" } 网络异常/非 200 非 404/解析失败：环境问题（API 未开启/Zotero 重启中）
  *   → 不写 failed，下次循环即重试（环境修复后立即恢复，不被 24h 冷却锁住）
+ */
+/**
+ * 获取 Zotero 附件全文（E3 三态：ok / no_index / api_error）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {number|string} port
+ * @param {string} attachmentKey
+ * @returns {Promise<{kind: "ok", text: string}|{kind: "no_index"}|{kind: "api_error"}>}
  */
 async function fetchZoteroFulltext(ctx, port, attachmentKey) {
   if (!attachmentKey) return { kind: "api_error" };
@@ -142,6 +177,10 @@ async function fetchZoteroFulltext(ctx, port, attachmentKey) {
 }
 
 /** file:///D:/Zotero/storage/x.pdf → D:\Zotero\storage\x.pdf */
+/** file:///D:/Zotero/storage/x.pdf → D:\\Zotero\\storage\\x.pdf
+ * @param {string} fileUrl
+ * @returns {string|null}
+ */
 function fileUrlToPath(fileUrl) {
   if (!fileUrl || !fileUrl.startsWith("file:///")) return null;
   try {
@@ -161,6 +200,12 @@ function fileUrlToPath(fileUrl) {
  * - meta.creatorSummary / meta.parsedDate 替代自拼 authors/year
  * - 附件条目（links.enclosure）反查 parentItem → pdfPath
  * - 全部标记 readOnly（A4 只读镜像）
+ */
+/**
+ * Zotero 全量同步（A1）：无 limit 全量拉取 + Total-Results 校验
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {number|string} port
+ * @returns {Promise<any>}
  */
 export async function fetchZoteroItems(ctx, port) {
   // 注意：itemType OR 过滤是 value 用 || 连接（itemType=journalArticle||conferencePaper），
@@ -233,7 +278,7 @@ export async function fetchZoteroItems(ctx, port) {
     entries.push({
       title,
       authors: (d.creators || [])
-        .map((c) => [c.firstName, c.lastName].filter(Boolean).join(" "))
+        .map((/** @type {any} */ c) => [c.firstName, c.lastName].filter(Boolean).join(" "))
         .filter(Boolean),
       authorSummary: item?.meta?.creatorSummary || null,
       year: typeof parsedDate === "string" && parsedDate ? parsedDate.slice(0, 4) : d.date ? String(d.date).slice(0, 4) : null,
@@ -262,6 +307,11 @@ export async function fetchZoteroItems(ctx, port) {
  * 用于 UI 左侧分类树展示与「未分类」兜底。
  * 实测：collections 端点返回 key/name/parentCollection 字段，全量拉取无分页负担。
  */
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {number|string} port
+ * @returns {Promise<any>}
+ */
 export async function fetchZoteroCollections(ctx, port) {
   const url = `http://127.0.0.1:${port}/api/users/0/collections?format=json`;
   let data = [];
@@ -283,6 +333,7 @@ export async function fetchZoteroCollections(ctx, port) {
 }
 
 /** 指纹：doi 小写 || title 小写（与 store.append 口径一致） */
+/** @param {any} entry @returns {string[]} */
 function fingerprintsOf(entry) {
   const fps = [];
   if (typeof entry.doi === "string" && entry.doi.trim()) fps.push(`doi=${entry.doi.trim().toLowerCase()}`);
@@ -294,6 +345,7 @@ function fingerprintsOf(entry) {
  * 去重优先级反转（A1）：同一 DOI/标题冲突时 Zotero 条目优先存活
  * （用户知识库可信度高于在线检索条目）
  */
+/** @param {any[]} entries @returns {any} */
 export function dedupeZoteroPriority(entries) {
   const seen = new Map();
   const order = [];
@@ -338,8 +390,15 @@ export function dedupeZoteroPriority(entries) {
  * 返回 { processed, summaries, keywords }；任何失败不影响主同步。
  * 调用方循环调度（runEnhancementLoop）：每轮批 batchLimit 条、LLM 预算 llmLimit 次。
  */
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").StoreApi} store
+ * @param {number} [batchLimit]
+ * @param {number} [llmLimit]
+ * @returns {Promise<any>}
+ */
 export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3) {
-  const zoteroPort = ctx.config.get?.("zoteroPort") ?? 23119;
+  const zoteroPort = ctx.config?.get?.("zoteroPort") ?? 23119;
   const doc = store.read("literature");
   const targets = (doc.entries || []).filter(
     (e) =>
@@ -362,11 +421,13 @@ export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3
   let llmUsed = 0;
   let summaries = 0;
   let keywords = 0;
+  /** @param {string|undefined} zoteroKey @param {Record<string, any>} patch */
   const patchEntry = (zoteroKey, patch) => {
     store.update("literature", undefined, (cur) => ({
-      entries: (cur.entries || []).map((e) => (e.zoteroKey === zoteroKey ? { ...e, ...patch } : e)),
+      entries: /** @type {any[]} */ (cur.entries || []).map((e) => (e.zoteroKey === zoteroKey ? { ...e, ...patch } : e)),
     }));
   };
+  /** @param {string|undefined} zoteroKey */
   const patchFailed = (zoteroKey) => patchEntry(zoteroKey, { fullTextParsed: "failed", failedAt: new Date().toISOString() });
 
   for (const entry of batch) {
@@ -384,7 +445,7 @@ export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3
               } else {
                 // 在线条目无 zoteroKey，按 e.id 匹配更新
                 store.update("literature", undefined, (cur) => ({
-                  entries: (cur.entries || []).map((e) => (e.id === entry.id ? { ...e, ...patchBase } : e)),
+                  entries: /** @type {any[]} */ (cur.entries || []).map((e) => (e.id === entry.id ? { ...e, ...patchBase } : e)),
                 }));
               }
               llmUsed += 1;
@@ -442,6 +503,7 @@ export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3
         continue;
       }
       const isScan = ft.text.length < SCAN_THRESHOLD;
+      /** @type {Record<string, any>} */
       const patch = isScan
         ? { fullTextParsed: "scan", failedAt: null }
         : { fullTextParsed: "ok", fullText: ft.text.slice(0, PDF_MAX_CHARS), failedAt: null };
@@ -474,6 +536,11 @@ export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3
  * 增强循环：逐批铺完摘要/翻译/关键词
  * 终止条件：无目标（processed === 0）或本轮零产出（防止 LLM 持续失败死循环）
  */
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").StoreApi} store
+ * @returns {Promise<any>}
+ */
 export async function runEnhancementLoop(ctx, store) {
   let rounds = 0;
   for (;;) {
@@ -485,6 +552,7 @@ export async function runEnhancementLoop(ctx, store) {
 }
 
 /** 判断文本是否含中文（含中文视为已是中文摘要，不翻译） */
+/** @param {unknown} text @returns {boolean} */
 function isEnglishText(text) {
   const s = String(text || "").trim();
   if (!s) return false;
@@ -495,8 +563,13 @@ function isEnglishText(text) {
  * Zotero 全量镜像同步（A1）：探测 → 全量拉取 → 镜像替换 → 水位线
  * 供 scanAllSources 与 index.js 同步定时器复用
  */
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").StoreApi} store
+ * @returns {Promise<any>}
+ */
 export async function syncZotero(ctx, store) {
-  const zoteroPort = ctx.config.get?.("zoteroPort") ?? 23119;
+  const zoteroPort = ctx.config?.get?.("zoteroPort") ?? 23119;
   const probe = await zoteroProbe(ctx, zoteroPort);
   if (!probe.ok) {
     return { ok: false, error: probe.error, code: probe.code, entries: [] };
@@ -541,6 +614,7 @@ export async function syncZotero(ctx, store) {
       }
       return base;
     }
+    /** @type {Record<string, any>} */
     const patch = {};
     // D1（复审）：pdfPath/pdfKey 兜底保留——附件映射一次失败（API 5xx/403 兜底仍失败）会让
     // 本轮所有条目 pdfKey 变 null，增强循环整体停摆；旧值保留则下次同步恢复，窗口期只影响增量
@@ -574,7 +648,7 @@ export async function syncZotero(ctx, store) {
     try {
       appendLiteratureLog(store, newEntries, `zotero-sync-${store.now()}`);
     } catch (err) {
-      ctx.log?.warn?.(`zotero sync log failed: ${err?.message || err}`);
+      ctx.log?.warn?.(`zotero sync log failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -585,6 +659,12 @@ export async function syncZotero(ctx, store) {
  * E5：OpenAlex 引用数补全（按 DOI，节流 batchLimit 条/批）
  * Zotero 镜像条目 citationCount 恒 null，「引用排序」对主库无效——用 OpenAlex cited_by_count 补
  */
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").StoreApi} store
+ * @param {number} [batchLimit]
+ * @returns {Promise<any>}
+ */
 export async function enrichCitationCounts(ctx, store, batchLimit = 5) {
   const doc = store.read("literature");
   const targets = (doc.entries || []).filter(
@@ -594,16 +674,22 @@ export async function enrichCitationCounts(ctx, store, batchLimit = 5) {
   const batch = targets.slice(0, batchLimit);
   for (const entry of batch) {
     try {
-      const res = await ctx.network.fetch(
+      if (!entry.doi) continue;
+      const res = await ctx.network?.fetch(
         `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(entry.doi)}`,
         { timeoutMs: 8000, cacheTtlMs: 0 }
       );
       if (!res?.ok) continue;
       const data = await res.json();
+      // zod 观测（方案 A）：OpenAlex 响应契约漂移仅记日志，不改变既有 typeof 容错
+      const oaCheck = OpenAlexWorkSchema.safeParse(data);
+      if (!oaCheck.success) {
+        ctx.log?.warn?.(`OpenAlex 响应与契约漂移：${oaCheck.error.issues[0]?.path?.join(".") || oaCheck.error.issues[0]?.code || "unknown"}`);
+      }
       const c = data?.cited_by_count;
       if (typeof c === "number") {
         store.update("literature", undefined, (cur) => ({
-          entries: (cur.entries || []).map((e) =>
+          entries: /** @type {any[]} */ (cur.entries || []).map((e) =>
             e.zoteroKey === entry.zoteroKey ? { ...e, citationCount: c } : e
           ),
         }));
@@ -616,6 +702,11 @@ export async function enrichCitationCounts(ctx, store, batchLimit = 5) {
 /**
  * 文献源扫描：仅 Zotero 本地源（实验记录中心化后去除工作区/在线源）
  * 返回 { entries, warnings, sourceStats }
+ */
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").StoreApi} store
+ * @returns {Promise<any>}
  */
 export async function scanAllSources(ctx, store) {
   const entries = [];

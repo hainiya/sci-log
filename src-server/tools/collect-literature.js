@@ -30,6 +30,11 @@ export const sessionPermission = {
   }),
 };
 
+/**
+ * @param {Record<string, any>} input
+ * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @returns {Promise<any>}
+ */
 export async function execute(input = {}, toolCtx) {
   const store = createStore(toolCtx.dataDir);
   ensureAutoBinding(toolCtx);
@@ -38,7 +43,7 @@ export async function execute(input = {}, toolCtx) {
   const scan = await scanAllSources(toolCtx, store);
   warnings.push(...scan.warnings);
 
-  const entries = scan.entries.map((entry, index) => ({
+  const entries = /** @type {any[]} */ (scan.entries).map((entry, index) => ({
     id: `lit_scan_${Date.now().toString(36)}_${index}`,
     addedAt: store.now(),
     status: "new",

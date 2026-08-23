@@ -2,14 +2,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * @param {any} app
+ * @param {import("../server/types.js").ToolCtx} ctx
+ */
 export default function registerPluginUiRoutes(app, ctx) {
-  app.get("/page", (c) => c.html(renderShell(c, ctx, "page")));
-  app.get("/widget", (c) => c.html(renderShell(c, ctx, "widget")));
+  app.get("/page", (/** @type {any} */ c) => c.html(renderShell(c, ctx, "page")));
+  app.get("/widget", (/** @type {any} */ c) => c.html(renderShell(c, ctx, "widget")));
 }
 
 // 内联缓存：CSS/JS 内容不变，避免每次请求都读盘
 const inlineCache = new Map();
 
+/**
+ * @param {import("../server/types.js").ToolCtx} ctx
+ * @param {string} name
+ * @returns {string|null}
+ */
 function inlineAsset(ctx, name) {
   if (inlineCache.has(name)) return inlineCache.get(name);
   const candidates = [];
@@ -28,6 +37,12 @@ function inlineAsset(ctx, name) {
   return null;
 }
 
+/**
+ * @param {any} c
+ * @param {import("../server/types.js").ToolCtx} ctx
+ * @param {string} surface
+ * @returns {string}
+ */
 function renderShell(c, ctx, surface) {
   const hanaCss = c.req.query("hana-css") || "";
   const theme = c.req.query("hana-theme") || "inherit";
@@ -80,6 +95,7 @@ function renderShell(c, ctx, surface) {
 </html>`;
 }
 
+/** @param {unknown} value @returns {string} */
 function escapeAttr(value) {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -87,6 +103,7 @@ function escapeAttr(value) {
     .replace(/</g, "&lt;");
 }
 
+/** @param {unknown} value @returns {string} */
 function escapeHtml(value) {
   return escapeAttr(value).replace(/>/g, "&gt;");
 }

@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { formatLogTime } from '../lib/dates';
+import { newId } from '../lib/ids';
 import { api } from '../api';
 import { ConfirmButton } from '../components/ConfirmButton';
 
@@ -22,24 +24,7 @@ const PARAM_TEMPLATES = [
 ];
 
 // ── 本地日期工具（避免 UTC 日期偏移） ──
-function pad(n: number) { return String(n).padStart(2, '0'); }
-
-/** 本地当前日期 → YYYY-MM-DD（记录日期恒为提交当天，不再提供表单字段） */
-function todayStrLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 /** 条目 → 展示文本（YYYY-MM-DD HH:mm） */
-function formatLogTime(e: any): string {
-  if (e.createdAt) {
-    const d = new Date(e.createdAt);
-    if (!Number.isNaN(d.getTime())) {
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    }
-  }
-  return e.date || '';
-}
 
 export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onConsumeEditEntryId }: Props) {
   const entries: any[] = state?.worklog?.entries || [];
@@ -51,10 +36,21 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
   const [taskId, setTaskId] = useState('');
   const [progress, setProgress] = useState('');
   const [saving, setSaving] = useState(false);
+  // 手动记录表单默认折叠（AI 记录为主，手动仅补充/纠错），点「记录工作」标题或「＋记录」展开
+  const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState('');
   const [durationHours, setDurationHours] = useState(''); // 时长（小时，可选；填写后甘特图投影实际时间线）
   const [startDate, setStartDate] = useState(''); // 开始日期（YYYY-MM-DD，可选，缺省为记录日期）
   const [editingId, setEditingId] = useState<string | null>(null);
+  // 列表正文「展开全文 / 收起」状态（默认截断，长记录才需要展开）
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const toggleRow = (id: string) =>
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [editDraft, setEditDraft] = useState<{ content: string; data: string; sampleId: string; system: string; durationHours: string; startDate: string }>({ content: '', data: '', sampleId: '', system: '', durationHours: '', startDate: '' });
   // 批量导入（仪器表格粘贴 → 合并记录）
   const [showImport, setShowImport] = useState(false);
@@ -84,28 +80,61 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
     );
   }, [entries, search]);
 
-  // 外部请求编辑（如指标面板「✏️ 补标注」跳转）：打开对应条目编辑弹窗，随后清空请求防重复触发；找不到则忽略
+  // 外部请求编辑（如指标面板「✏️ 补标注」跳转）：清空搜索过滤确保目标条目渲染，
+  // 打开编辑弹窗并滚动聚焦到该条记录；随后清空请求防重复触发；找不到则忽略
   useEffect(() => {
     if (!editEntryId) return;
     const entry = entries.find((e) => e.id === editEntryId);
     if (entry) {
+      if (search) setSearch(''); // 清掉检索词，避免目标条目被过滤掉
       setEditingId(entry.id);
       setEditDraft({ content: entry.content || '', data: entry.data || '', sampleId: entry.sampleId || '', system: entry.system || '', durationHours: entry.durationHours ?? '', startDate: entry.startDate || '' });
+      // 等列表重渲染后滚动到该条记录（避免从头下滑找）
+      setTimeout(() => {
+        document.getElementById(`mrc-log-${entry.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 80);
     }
     onConsumeEditEntryId?.();
   }, [editEntryId]);
 
-  const writeEntries = async (next: any[], okMsg: string) => {
-    try {
-      await api.write('worklog', state.worklog.version, { entries: next });
-      await onStateChange();
-      showToast(okMsg);
-      return true;
-    } catch (err: any) {
-      showToast(err.message.includes('version_conflict') ? '数据已被更新，已为你刷新' : `保存失败：${err.message}`, { error: true });
-      onStateChange();
-      return false;
+  // ── worklog 写入：只用 PUT /worklog（新增/编辑共用，确定可用）──
+  // 首次用当前快照 version 提交；若乐观锁冲突(409)，响应会带回最新 doc，
+  // 用它在最新数据上重新 patch 后再写（最多重试 2 次），避免「编辑无法保存」卡死。
+  // 不额外依赖 GET /worklog，排除该请求挂起/失败导致保存整体失败。
+  const lastConflictDocRef = useRef<any>(null);
+  const writeWorklog = async (updater: (latest: any[]) => any[], okMsg: string) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let base: { version: number; entries: any[] };
+      if (attempt === 0) {
+        base = { version: state.worklog?.version, entries: state.worklog?.entries || [] };
+      } else {
+        const conflict = lastConflictDocRef.current;
+        if (!conflict || !conflict.entries) {
+          showToast('数据已被其他更新占用，请刷新后重试', { error: true });
+          return false;
+        }
+        base = { version: conflict.version, entries: conflict.entries || [] };
+      }
+      const next = updater(base.entries);
+      try {
+        await api.write('worklog', base.version, { entries: next });
+        lastConflictDocRef.current = null;
+        await onStateChange();
+        showToast(okMsg);
+        return true;
+      } catch (err: any) {
+        if (err?.message?.includes('version_conflict') && err?.data && attempt < 2) {
+          lastConflictDocRef.current = err.data; // 409 携带最新 doc，基于它重试
+          continue;
+        }
+        showToast(err?.message?.includes('version_conflict')
+          ? '数据持续被其他更新占用，请稍后再试'
+          : `保存失败：${err?.message || String(err)}${err?.detail ? `（${err.detail}）` : ''}`, { error: true });
+        await onStateChange();
+        return false;
+      }
     }
+    return false;
   };
 
   const save = async () => {
@@ -124,11 +153,11 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
     setSaving(true);
     try {
       const finalSampleId = (sampleId ?? suggestSampleId()).trim() || null;
-      const ok = await writeEntries(
-        [
-          ...entries,
+      const ok = await writeWorklog(
+        (latest) => [
+          ...latest,
           {
-            id: `work_${Date.now().toString(36)}`,
+            id: newId("work"),
             sampleId: finalSampleId,
             system: system.trim() || null,
             date: todayStr,
@@ -160,20 +189,21 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
   };
 
   const saveEdit = async (id: string) => {
-    const dhNum = editDraft.durationHours.trim() === '' ? null : Number(editDraft.durationHours.trim());
-    if (dhNum !== null && (!Number.isFinite(dhNum) || dhNum <= 0)) {
-      showToast('时长必须为正数（小时）', { error: true });
+    // 编辑以「纠错 AI 记录」为主：不得因 AI 遗留的非法时长/日期值拦截保存。
+    // 非法时长归一为 null（甘特图不投影）；日期仅做格式校验，不拦截未来值（用户可下次改回）。
+    const rawDur = String(editDraft.durationHours ?? '').trim();
+    const dhNum = rawDur === '' ? null : Number(rawDur);
+    const dhValid = dhNum === null || (Number.isFinite(dhNum) && dhNum > 0);
+    const finalDh = dhValid ? dhNum : null;
+    const startDate = String(editDraft.startDate ?? '').trim() || null;
+    if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+      showToast('开始日期格式有误（应为 YYYY-MM-DD）', { error: true });
       return;
     }
-    const todayStr = new Date().toLocaleDateString('sv-SE');
-    if (editDraft.startDate && editDraft.startDate > todayStr) {
-      showToast('开始日期不能晚于今天', { error: true });
-      return;
-    }
-    const ok = await writeEntries(
-      entries.map((e) =>
+    const ok = await writeWorklog(
+      (latest) => latest.map((e) =>
         e.id === id
-          ? { ...e, content: editDraft.content.trim(), data: editDraft.data.trim() || null, sampleId: editDraft.sampleId.trim() || null, system: editDraft.system.trim() || null, editedAt: new Date().toISOString(), durationHours: dhNum, startDate: editDraft.startDate || null }
+          ? { ...e, content: editDraft.content.trim(), data: editDraft.data.trim() || null, sampleId: editDraft.sampleId.trim() || null, system: editDraft.system.trim() || null, editedAt: new Date().toISOString(), durationHours: finalDh, startDate }
           : e
       ),
       '记录已更新'
@@ -182,7 +212,7 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
   };
 
   const remove = async (id: string) => {
-    await writeEntries(entries.filter((e) => e.id !== id), '记录已删除');
+    await writeWorklog((latest) => latest.filter((e) => e.id !== id), '记录已删除');
   };
 
   const runImportPreview = async () => {
@@ -223,64 +253,77 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
   return (
     <div className="mrc-worklog">
       <div className="mrc-panel-section">
-        <div className="mrc-section-head">
-          <span className="mrc-section-title">✍️ 记录工作</span>
-        </div>
-        <div className="mrc-field">
-          <label>今天做了什么？</label>
-          <textarea rows={3} value={content} onChange={(e) => setContent(e.target.value)} placeholder="例如：合成了 CsPbI3 薄膜，退火 150°C 后 PL 强度提升…" />
-        </div>
-        <div className="mrc-field">
-          <label>实验数据 / 工艺参数（可选）</label>
-          <textarea rows={2} value={data} onChange={(e) => setData(e.target.value)} placeholder={"结构化参数可分行：温度(°C): 150\n时间(h): 2"} />
-          <div className="mrc-template-row">
-            <span className="mrc-template-label">快捷模板：</span>
-            {PARAM_TEMPLATES.map((tpl) => (
-              <button key={tpl.label} className="mrc-btn small" onClick={() => setData((d) => (d ? d + '\n' : '') + tpl.text)}>{tpl.label}</button>
-            ))}
+        <button type="button" className="mrc-accordion-head" onClick={() => setShowForm((v) => !v)} title="AI 自动记录为主；需要补充或修改 AI 记错的地方时手动添加">
+          <span className="mrc-section-title">✍️ 手动记录</span>
+          <span className="mrc-hint">AI 记录为主 · 手动仅补充 / 纠错</span>
+          <span className="mrc-accordion-toggle">{showForm ? '收起 ▴' : '展开 ▾'}</span>
+        </button>
+        {showForm && (
+        <>
+        <div className="mrc-form-group">
+          <div className="mrc-form-group-title">基本信息</div>
+          <div className="mrc-field">
+            <label>今天做了什么？</label>
+            <textarea rows={3} value={content} onChange={(e) => setContent(e.target.value)} placeholder="例如：合成了 CsPbI3 薄膜，退火 150°C 后 PL 强度提升…" />
+          </div>
+          <div className="mrc-field">
+            <label>材料体系（可选）</label>
+            <span className="mrc-field-hint">用于指标趋势归类；可自由输入，或从预设中选择</span>
+            <input
+              list="mrc-system-preset"
+              value={system}
+              onChange={(e) => setSystem(e.target.value)}
+              placeholder="如 SnSe、Bi₂Te₃…"
+            />
+            <datalist id="mrc-system-preset">
+              {SYSTEM_PRESETS.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
           </div>
         </div>
-        <div className="mrc-field">
-          <label>材料体系（可选）</label>
-          <span className="mrc-field-hint">用于指标趋势归类；可自由输入，或从预设中选择</span>
-          <input
-            list="mrc-system-preset"
-            value={system}
-            onChange={(e) => setSystem(e.target.value)}
-            placeholder="如 SnSe、Bi₂Te₃…"
-          />
-          <datalist id="mrc-system-preset">
-            {SYSTEM_PRESETS.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
+        <div className="mrc-form-group">
+          <div className="mrc-form-group-title">参数与数据</div>
+          <div className="mrc-field">
+            <label>实验数据 / 工艺参数（可选）</label>
+            <textarea rows={2} value={data} onChange={(e) => setData(e.target.value)} placeholder={"结构化参数可分行：温度(°C): 150\n时间(h): 2"} />
+            <div className="mrc-template-row">
+              <span className="mrc-template-label">快捷模板：</span>
+              {PARAM_TEMPLATES.map((tpl) => (
+                <button key={tpl.label} className="mrc-btn small" onClick={() => setData((d) => (d ? d + '\n' : '') + tpl.text)}>{tpl.label}</button>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="mrc-field">
-          <label>时长（小时，可选；填写后甘特图投影实际时间线）</label>
-          <input type="number" min={0.1} step={0.1} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} placeholder="例如：244" />
-          {durationHours.trim() !== '' && Number(durationHours) > 0 && (
-            <span className="mrc-hint">≈ {(Number(durationHours) / 24).toFixed(1)} 天</span>
-          )}
-        </div>
-        <div className="mrc-field">
-          <label>开始日期（可选）</label>
-          <span className="mrc-field-hint">决定甘特图实际条起点；留空则从记录当天开始</span>
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-        </div>
-        <div className="mrc-field-row">
-          <input
-            value={sampleId ?? suggestSampleId()}
-            onChange={(e) => setSampleId(e.target.value)}
-            placeholder="样品编号（可自定义，如 CSP-01）"
-            title="样品编号可自定义，便于按体系追溯"
-          />
-          <select value={taskId} onChange={(e) => setTaskId(e.target.value)}>
-            <option value="">关联任务（可选）</option>
-            {ganttTasks.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          {taskId && (
-            <input type="number" min={0} max={100} placeholder="任务进度 %" value={progress} onChange={(e) => setProgress(e.target.value)} />
-          )}
+        <div className="mrc-form-group">
+          <div className="mrc-form-group-title">排期与关联</div>
+          <div className="mrc-field">
+            <label>时长（小时，可选；填写后甘特图投影实际时间线）</label>
+            <input type="number" min={0.1} step={0.1} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} placeholder="例如：244" />
+            {durationHours.trim() !== '' && Number(durationHours) > 0 && (
+              <span className="mrc-hint">≈ {(Number(durationHours) / 24).toFixed(1)} 天</span>
+            )}
+          </div>
+          <div className="mrc-field">
+            <label>开始日期（可选）</label>
+            <span className="mrc-field-hint">决定甘特图实际条起点；留空则从记录当天开始</span>
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </div>
+          <div className="mrc-field-row">
+            <input
+              value={sampleId ?? suggestSampleId()}
+              onChange={(e) => setSampleId(e.target.value)}
+              placeholder="样品编号（可自定义，如 CSP-01）"
+              title="样品编号可自定义，便于按体系追溯"
+            />
+            <select value={taskId} onChange={(e) => setTaskId(e.target.value)}>
+              <option value="">关联任务（可选）</option>
+              {ganttTasks.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            {taskId && (
+              <input type="number" min={0} max={100} placeholder="任务进度 %" value={progress} onChange={(e) => setProgress(e.target.value)} />
+            )}
+          </div>
         </div>
         <div className="mrc-worklog-actions">
           <button className="mrc-btn primary" onClick={save} disabled={saving || (!content.trim() && !data.trim())}>
@@ -339,12 +382,15 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
             </div>
           </div>
         )}
+        </>
+        )}
       </div>
 
       <div className="mrc-panel-section">
         <div className="mrc-section-head">
           <span className="mrc-section-title">🧪 实验记录</span>
           <span className="mrc-count">{entries.length}</span>
+          <button className="mrc-btn small primary" onClick={() => setShowForm(true)} title="手动补充 / 批量导入">＋ 记录</button>
           <input
             className="mrc-worklog-search"
             placeholder="按样品编号 / 内容检索…"
@@ -356,7 +402,7 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
           {entries.length === 0 && <div className="mrc-empty">还没有实验记录。记录工作后，可让助手审查研究进展。</div>}
           {entries.length > 0 && filtered.length === 0 && <div className="mrc-empty">没有匹配「{search}」的记录。</div>}
           {filtered.map((entry) => (
-            <article key={entry.id} className="mrc-log-entry">
+            <article key={entry.id} id={`mrc-log-${entry.id}`} className={`mrc-log-entry ${editingId === entry.id ? 'editing' : ''}`}>
               {editingId === entry.id ? (
                 <div className="mrc-log-edit">
                   <div className="mrc-field-row">
@@ -393,7 +439,20 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
                       <ConfirmButton label="删" className="mrc-btn small danger" onConfirm={() => remove(entry.id)} title="删除这条记录" />
                     </span>
                   </div>
-                  <div className="mrc-log-content">{entry.content}</div>
+                  {(() => {
+                    const text = String(entry.content || '');
+                    const expandedRow = expandedRows.has(entry.id);
+                    return (
+                      <div className="mrc-log-content">
+                        {expandedRow || text.length <= 180 ? text : text.slice(0, 180) + '…'}
+                        {text.length > 180 && (
+                          <button className="mrc-link-btn" onClick={() => toggleRow(entry.id)}>
+                            {expandedRow ? ' 收起' : ' 展开全文'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {entry.fields && Object.keys(entry.fields).length > 0 && (
                     <div className="mrc-log-fields">
                       {Object.entries(

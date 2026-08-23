@@ -6,6 +6,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { sampleText as hanaSampleText } from "@hana/plugin-runtime";
+import { extractFirstJson } from "./json-util.js";
+import { TriageOutputSchema, ScheduleItemSchema } from "./schemas.js";
 
 const DEFAULT_TIMEOUT = 120000;
 
@@ -14,9 +16,11 @@ const DEFAULT_TIMEOUT = 120000;
  * 自动搜集 / 报告 / 审查 / PDF 摘要共享同一信号量，避免同窗口多路调用互相挤压导致 LLM_TIMEOUT。
  */
 class Semaphore {
+  /** @param {number} limit */
   constructor(limit) {
     this.limit = limit;
     this.active = 0;
+    /** @type {Array<(value?: unknown) => void>} */
     this.queue = [];
   }
   acquire() {
@@ -30,12 +34,13 @@ class Semaphore {
     this.active = Math.max(0, this.active - 1);
     if (this.queue.length > 0 && this.active < this.limit) {
       this.active += 1;
-      this.queue.shift()();
+      this.queue.shift()?.();
     }
   }
 }
 const LLM_SEM = new Semaphore(2);
 
+/** @param {any[]} messages @returns {number} */
 function estimateTokens(messages) {
   let chars = 0;
   for (const m of messages || []) {
@@ -44,10 +49,16 @@ function estimateTokens(messages) {
   return Math.ceil(chars / 4); // 粗估：4 字符 ≈ 1 token
 }
 
+/** @param {unknown} err @returns {boolean} */
 function isTimeoutError(err) {
-  return /timeout/i.test(err?.message || err?.cause?.message || err?.code || String(err));
+  return /timeout/i.test((/** @type {any} */ (err))?.message || (/** @type {any} */ (err))?.cause?.message || (/** @type {any} */ (err))?.code || String(err));
 }
 
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").SampleTextInput} input
+ * @returns {Promise<any>}
+ */
 export async function sampleText(ctx, input) {
   if (!ctx?.bus?.request) {
     throw new Error("plugin bus request unavailable");
@@ -80,7 +91,7 @@ export async function sampleText(ctx, input) {
         if (attempt < maxAttempts - 1) continue; // 重试一次
         ctx?.log?.warn(`LLM_TIMEOUT [${callPoint}] 重试后仍超时，放弃`);
       } else {
-        ctx?.log?.warn(`LLM error [${callPoint}]: ${err?.message || String(err)}`);
+        ctx?.log?.warn(`LLM error [${callPoint}]: ${err instanceof Error ? err.message : String(err)}`);
       }
       throw err;
     } finally {
@@ -90,15 +101,24 @@ export async function sampleText(ctx, input) {
   throw lastErr || new Error("LLM call failed");
 }
 
+/** 读 prompt（缺省空串）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {string} name
+ * @returns {string}
+ */
 function readPrompt(ctx, name) {
   try {
-    return fs.readFileSync(path.join(ctx.pluginDir, "prompts", name), "utf-8");
+    return fs.readFileSync(path.join(ctx.pluginDir ?? "", "prompts", name), "utf-8");
   } catch {
     return "";
   }
 }
 
-/** 从用户消息提取检索关键词（文献自动搜集用） */
+/** 从用户消息提取检索关键词（文献自动搜集用）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {string} text
+ * @returns {Promise<string[]>}
+ */
 export async function extractKeywords(ctx, text) {
   const base = readPrompt(ctx, "keyword-extractor.md");
   const result = await sampleText(ctx, {
@@ -124,6 +144,10 @@ export async function extractKeywords(ctx, text) {
 
 /**
  * C3：从全文生成 2-3 句摘要（abstract 为空的 Zotero 条目用）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").LiteratureEntry} entry
+ * @param {unknown} text
+ * @returns {Promise<string|null>}
  */
 export async function summarizeFromFulltext(ctx, entry, text) {
   const result = await sampleText(ctx, {
@@ -150,6 +174,10 @@ export async function summarizeFromFulltext(ctx, entry, text) {
  * 返回 string[]；失败返回 null（不阻塞增强链路）
  * 命名 extractLiteratureKeywords 而非 extractKeywords：
  * 后者已被 B1 检索关键词提取占用（同名导出在 ES module 中直接 SyntaxError）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").LiteratureEntry} entry
+ * @param {unknown} text
+ * @returns {Promise<string[]|null>}
  */
 export async function extractLiteratureKeywords(ctx, entry, text) {
   const out = await sampleText(ctx, {
@@ -177,6 +205,10 @@ export async function extractLiteratureKeywords(ctx, entry, text) {
 
 /**
  * E2：英文摘要 → 中文翻译（材料术语保真，保留原文对照用 abstractEn）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").LiteratureEntry} entry
+ * @param {unknown} abstractEn
+ * @returns {Promise<string|null>}
  */
 export async function translateAbstract(ctx, entry, abstractEn) {
   const result = await sampleText(ctx, {
@@ -202,6 +234,9 @@ export async function translateAbstract(ctx, entry, abstractEn) {
 /**
  * 实验记录 AI 巡检：参数结构化 + 文献关联 + 甘特进度推断 + 日程识别 + 方案对比
  * 一次 LLM 调用输出全部结果；解析失败返回 null（不阻塞主流程）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {{ entries: import("./types.js").WorklogEntry[], gantt: import("./types.js").GanttDoc, literature: import("./types.js").LiteratureDoc, today?: string }} input
+ * @returns {Promise<import("./types.js").TriageResult|null>}
  */
 export async function triageWorkEntry(ctx, { entries, gantt, literature, today }) {
   const base = readPrompt(ctx, "worklog-triage.md");
@@ -245,11 +280,11 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
   });
 
   const raw = String(result?.text || "").trim();
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
+  const json = extractFirstJson(raw);
+  if (!json) return null;
   let parsed;
   try {
-    parsed = JSON.parse(jsonMatch[0]);
+    parsed = JSON.parse(json);
   } catch {
     ctx?.log?.warn("triageWorkEntry: LLM 输出非 JSON，跳过巡检");
     return null;
@@ -257,19 +292,19 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
 
   const taskIds = new Set(taskList.map((t) => t.id));
   const fields = Array.isArray(parsed?.fields)
-    ? parsed.fields
+    ? /** @type {any[]} */ (parsed.fields)
         .filter((f) => f && typeof f.k === "string" && f.k.trim())
         .slice(0, 10)
         .map((f) => ({ k: f.k.trim(), v: String(f.v ?? "").trim() }))
         .filter((f) => f.v)
     : [];
   const citations = Array.isArray(parsed?.citations)
-    ? parsed.citations.map((c) => String(c).trim()).filter(Boolean).slice(0, 5)
+    ? /** @type {any[]} */ (parsed.citations).map((c) => String(c).trim()).filter(Boolean).slice(0, 5)
     : [];
   // 材料体系：记录能明确判断时填标准名，无法判断为空字符串（供提案回填/落库）；限长防自由文本
   const system = typeof parsed?.system === "string" ? parsed.system.trim().slice(0, 50) : "";
   const taskProgress = Array.isArray(parsed?.taskProgress)
-    ? parsed.taskProgress
+    ? /** @type {any[]} */ (parsed.taskProgress)
         .filter((tp) => tp && taskIds.has(String(tp.taskId)))
         .map((tp) => {
           const p = Math.min(100, Math.max(0, Number(tp.progress) || 0));
@@ -279,7 +314,7 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
         .slice(0, 3)
     : [];
   const events = Array.isArray(parsed?.events)
-    ? parsed.events
+    ? /** @type {any[]} */ (parsed.events)
         .filter((ev) => ev && typeof ev.title === "string" && ev.title.trim() && /^\d{4}-\d{2}-\d{2}$/.test(String(ev.date || "")))
         .map((ev) => ({
           title: String(ev.title).trim().slice(0, 80),
@@ -302,13 +337,21 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
       ? parsed.startDate
       : null;
 
-  return { fields, citations, system, taskProgress, events, durationHours, startDate };
+  const out = { fields, citations, system, taskProgress, events, durationHours, startDate };
+  // zod 观测（方案 A）：不改变容错结果，仅对契约漂移记日志，供迭代 prompt / 解析器时发现
+  const check = TriageOutputSchema.safeParse(out);
+  if (!check.success) {
+    ctx?.log?.warn(`triageWorkEntry: 输出与契约漂移（${check.error.issues.length} 处）：${check.error.issues.map((i) => i.path.join(".") || i.code).join(", ")}`);
+  }
+  return out;
 }
 
-/** 本地时区今天（YYYY-MM-DD），用于 startDate 不晚于今天的保守校验 */
+/** 本地时区今天（YYYY-MM-DD），用于 startDate 不晚于今天的保守校验
+ * @returns {string}
+ */
 function localTodayStr() {
   const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
+  const pad = (/** @type {number} */ n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
@@ -317,19 +360,23 @@ const SCHEDULE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * 解析 next-step-advisor 输出中的 <!--SCHEDULE--> JSON 块。
  * 返回结构化日程意图数组（已校验 due 为合法绝对日期，且 >= 今天）。
+ * @param {unknown} raw
+ * @param {string} [today]
+ * @param {number} [maxItems]
+ * @returns {Array<{title: string, due: string, type: string, linksTaskId: string|null, reason: string}>}
  */
 function parseScheduleBlock(raw, today, maxItems = 5) {
   const marker = "<!--SCHEDULE-->";
   const idx = String(raw || "").indexOf(marker);
   if (idx === -1) return [];
-  const block = raw.slice(idx + marker.length).trim();
+  const block = String(raw).slice(idx + marker.length).trim();
   try {
-    const jsonMatch = block.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return [];
-    const parsed = JSON.parse(jsonMatch[0]);
+    const json = extractFirstJson(block);
+    if (!json) return [];
+    const parsed = JSON.parse(json);
     const list = Array.isArray(parsed?.schedule) ? parsed.schedule : [];
     const todayStr = today || new Date().toISOString().slice(0, 10);
-    return list
+    return /** @type {any[]} */ (list)
       .filter(
         (it) =>
           it &&
@@ -356,6 +403,12 @@ function parseScheduleBlock(raw, today, maxItems = 5) {
  * 生成下一步行动建议（log_work 后返回）
  * 上下文含：近期实验记录（含刚记录的新条目）/ 时间表 / 已排日程（避免与已排安排冲突）
  * 返回 { text, schedule }：text 为可读建议；schedule 为可排入日程的结构化意图（P0 闭环用）
+ * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.js").WorklogDoc} worklog
+ * @param {import("./types.js").GanttDoc} gantt
+ * @param {import("./types.js").CalendarDoc} calendar
+ * @param {string} [today]
+ * @returns {Promise<import("./types.js").AdviceResult>}
  */
 export async function nextStepAdvice(ctx, worklog, gantt, calendar, today) {
   const base = readPrompt(ctx, "next-step-advisor.md");
@@ -378,6 +431,10 @@ export async function nextStepAdvice(ctx, worklog, gantt, calendar, today) {
   const raw = String(result?.text || "").trim();
   const text = raw.split("<!--SCHEDULE-->")[0].trim();
   const schedule = parseScheduleBlock(raw, today);
-  return { text, schedule };
+  const badSchedule = schedule.filter((it) => !ScheduleItemSchema.safeParse(it).success);
+  if (badSchedule.length > 0) {
+    ctx?.log?.warn(`nextStepAdvice: ${badSchedule.length} 条日程与契约漂移，已跳过`);
+  }
+  return { text, schedule: schedule.filter((it) => ScheduleItemSchema.safeParse(it).success) };
 }
 

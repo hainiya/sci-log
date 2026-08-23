@@ -7,10 +7,7 @@
 import { createStore } from "../server/store.js";
 import { nextStepAdvice, triageWorkEntry } from "../server/llm.js";
 import { ensureAutoBinding } from "../server/binding.js";
-
-function newId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-}
+import { newId } from "../server/ids.js";
 
 export const name = "log_work";
 export const description =
@@ -67,6 +64,11 @@ export const sessionPermission = {
   }),
 };
 
+/**
+ * @param {Record<string, any>} input
+ * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @returns {Promise<any>}
+ */
 export async function execute(input = {}, toolCtx) {
   const store = createStore(toolCtx.dataDir);
   const content = String(input.content || "").trim();
@@ -99,6 +101,7 @@ export async function execute(input = {}, toolCtx) {
   const calendar = store.read("calendar");
 
   // 1. 构造实验记录条目
+  /** @type {import("../server/types.js").WorklogEntry} */
   const worklogEntry = {
     id: newId("work"),
     date,
@@ -124,7 +127,7 @@ export async function execute(input = {}, toolCtx) {
         today: date,
       });
     } catch (err) {
-      toolCtx?.log?.warn?.(`log_work triage failed: ${err?.message || err}`);
+      toolCtx?.log?.warn?.(`log_work triage failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (out) {
       if (out.fields?.length) worklogEntry.fields = out.fields;
@@ -142,14 +145,14 @@ export async function execute(input = {}, toolCtx) {
   if (out?.durationHours && !worklogEntry.durationHours) {
     try {
       store.update("worklog", undefined, (cur) => ({
-        entries: (cur.entries || []).map((e) =>
+        entries: /** @type {any[]} */ (cur.entries || []).map((e) =>
           e.id === worklogEntry.id
             ? { ...e, durationHours: out.durationHours, ...(out.startDate ? { startDate: out.startDate } : {}) }
             : e
         ),
       }));
     } catch (err) {
-      toolCtx?.log?.warn?.(`log_work duration enrich failed: ${err?.message || err}`);
+      toolCtx?.log?.warn?.(`log_work duration enrich failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -159,10 +162,10 @@ export async function execute(input = {}, toolCtx) {
       const task = (gantt.tasks || []).find((t) => t.id === tp.taskId);
       try {
         store.update("gantt", undefined, (cur) => ({
-          tasks: (cur.tasks || []).map((t) => (t.id === tp.taskId ? { ...t, progress: tp.progress } : t)),
+          tasks: /** @type {any[]} */ (cur.tasks || []).map((t) => (t.id === tp.taskId ? { ...t, progress: tp.progress } : t)),
         }));
       } catch (err) {
-        toolCtx?.log?.warn?.(`log_work gantt progress failed: ${err?.message || err}`);
+        toolCtx?.log?.warn?.(`log_work gantt progress failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     for (const ev of out.events || []) {
@@ -179,7 +182,7 @@ export async function execute(input = {}, toolCtx) {
           },
         ]);
       } catch (err) {
-        toolCtx?.log?.warn?.(`log_work calendar append failed: ${err?.message || err}`);
+        toolCtx?.log?.warn?.(`log_work calendar append failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     triageSummary = {
@@ -198,11 +201,11 @@ export async function execute(input = {}, toolCtx) {
     const progress = Math.min(Math.max(Number(update.progress) || 0, 0), 100);
     try {
       store.update("gantt", undefined, (cur) => ({
-        tasks: (cur.tasks || []).map((t) => (t.id === update.taskId ? { ...t, progress } : t)),
+        tasks: /** @type {any[]} */ (cur.tasks || []).map((t) => (t.id === update.taskId ? { ...t, progress } : t)),
       }));
       progressCount += 1;
     } catch (err) {
-      toolCtx?.log?.warn?.(`log_work progress failed: ${err?.message || err}`);
+      toolCtx?.log?.warn?.(`log_work progress failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -212,16 +215,15 @@ export async function execute(input = {}, toolCtx) {
   let scheduleCount = 0;
   if (autoTriage) {
     try {
-      const worklogWithNew = {
-        ...store.read("worklog"),
-        entries: [...(store.read("worklog").entries || []), worklogEntry],
-      };
+      // step3 已把 worklogEntry 写入 store，此处 read 即最新；不再手动追加，
+      // 否则刚记录的新条目会在传给 nextStepAdvice 的 worklog 里出现两次（污染下一步建议）
+      const worklogWithNew = store.read("worklog");
       const adviceObj = await nextStepAdvice(toolCtx, worklogWithNew, store.read("gantt"), calendar, date);
       advice = adviceObj.text || "";
       // 把下一步建议中可排程的具体行动，直接排入日历（与 triage events 去重）
       const existingCal = store.read("calendar").events || [];
-      const triageKeys = new Set((out?.events || []).map((ev) => `${ev.title}|${ev.date}`));
-      const sameDay = (d1, d2) => d1 && d2 && Math.abs(new Date(d1) - new Date(d2)) <= 2 * 86400000;
+      const triageKeys = new Set(/** @type {any[]} */ (out?.events || []).map((ev) => `${ev.title}|${ev.date}`));
+      const sameDay = /** @type {(d1: any, d2: any) => boolean} */ ((d1, d2) => d1 && d2 && Math.abs(new Date(d1).getTime() - new Date(d2).getTime()) <= 2 * 86400000);
       for (const item of adviceObj.schedule || []) {
         if (triageKeys.has(`${item.title}|${item.due}`)) continue;
         if (existingCal.some((ev) => ev.title === item.title && sameDay(ev.date, item.due))) continue;
@@ -231,11 +233,11 @@ export async function execute(input = {}, toolCtx) {
           ]);
           scheduleCount += 1;
         } catch (err) {
-          toolCtx?.log?.warn?.(`log_work schedule append failed: ${err?.message || err}`);
+          toolCtx?.log?.warn?.(`log_work schedule append failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     } catch (err) {
-      advice = `（建议生成失败：${err.message}）`;
+      advice = `（建议生成失败：${err instanceof Error ? err.message : String(err)}）`;
     }
   }
 

@@ -4,10 +4,7 @@
  */
 import { createStore } from "../server/store.js";
 import { ensureAutoBinding } from "../server/binding.js";
-
-function newId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-}
+import { newId } from "../server/ids.js";
 
 export const name = "manage_schedule";
 export const description =
@@ -47,6 +44,11 @@ export const sessionPermission = {
   }),
 };
 
+/**
+ * @param {Record<string, any>} input
+ * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @returns {Promise<any>}
+ */
 export async function execute(input = {}, toolCtx) {
   const store = createStore(toolCtx.dataDir);
   const { action, target } = input;
@@ -56,7 +58,7 @@ export async function execute(input = {}, toolCtx) {
   const listField = target === "gantt" ? "tasks" : "events";
 
   if (action === "read") {
-    const doc = store.read(target);
+    const doc = /** @type {Record<string, any>} */ (store.read(target));
     const list = doc[listField] || [];
     const text =
       target === "gantt"
@@ -97,7 +99,7 @@ export async function execute(input = {}, toolCtx) {
     if (!input.id) throw new Error("update 需要 id 参数");
     if (!input.data || typeof input.data !== "object") throw new Error("update 需要 data 参数");
     store.update(target, undefined, (cur) => ({
-      [listField]: (cur[listField] || []).map((e) => (e.id === input.id ? { ...e, ...input.data } : e)),
+      [listField]: /** @type {any[]} */ (cur[listField] || []).map((e) => (e.id === input.id ? { ...e, ...input.data } : e)),
     }));
     return { content: [{ type: "text", text: `已更新${target === "gantt" ? "任务" : "日程"} ${input.id}` }] };
   }
@@ -105,7 +107,7 @@ export async function execute(input = {}, toolCtx) {
   if (action === "delete") {
     if (!input.id) throw new Error("delete 需要 id 参数");
     store.update(target, undefined, (cur) => ({
-      [listField]: (cur[listField] || []).filter((e) => e.id !== input.id),
+      [listField]: /** @type {any[]} */ (cur[listField] || []).filter((e) => e.id !== input.id),
     }));
     return { content: [{ type: "text", text: `已删除 ${target} 条目 ${input.id}` }] };
   }

@@ -13,22 +13,35 @@ import { triageWorklog } from "../server/triage.js";
 import { readSettings, writeSettings, scanAllSources, zoteroProbe, runEnhancementLoop, enrichCitationCounts } from "../server/sources.js";
 import { buildMetricsSeries } from "../server/metrics.js";
 import { parseMetricTable } from "../server/import-parser.js";
+import {
+  WorklogImportBodySchema,
+  LiteratureAppendBodySchema,
+  SettingsMetricsBodySchema,
+  BindingBodySchema,
+  AutoTriageBodySchema,
+  SearchWindowBodySchema,
+} from "../server/schemas.js";
 
 const WRITABLE = new Set(["worklog", "gantt", "calendar", "literature"]);
 
+/**
+ * @param {any} app
+ * @param {import("../server/types.js").ToolCtx} ctx
+ */
 export default function registerApiRoutes(app, ctx) {
   const store = createStore(ctx.dataDir);
 
-  const sessionIdOf = (c) => {
+  const sessionIdOf = (/** @type {any} */ c) => {
     const header = c.req.header("x-hana-plugin-surface-session");
     if (header && header.trim()) return header.trim();
     return c.req.query("sessionId") || null;
   };
 
-  const sessionPathOf = (c) => c.req.query("sessionPath") || null;
+  const sessionPathOf = (/** @type {any} */ c) => c.req.query("sessionPath") || null;
 
   // ── 全量状态 ──────────────────────────────────────────────
-  app.get("/state", (c) => {
+  app.get("/state", (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     const state = {};
     for (const name of ["binding", "gantt", "calendar", "literature", "worklog", "settings", "collections"]) {
       if (name === "literature") {
@@ -41,18 +54,18 @@ export default function registerApiRoutes(app, ctx) {
     }
     state.updates = store.getUpdates();
     state.config = {
-      autoCollectEnabled: ctx.config.get?.("autoCollectEnabled") ?? true,
-      autoApproveLiterature: ctx.config.get?.("autoApproveLiterature") ?? true,
-      zoteroPort: ctx.config.get?.("zoteroPort") ?? 23119,
+      autoCollectEnabled: ctx.config?.get?.("autoCollectEnabled") ?? true,
+      autoApproveLiterature: ctx.config?.get?.("autoApproveLiterature") ?? true,
+      zoteroPort: ctx.config?.get?.("zoteroPort") ?? 23119,
       // autoTriage 迁入宿主配置（技术栈复审）：宿主优先，回退 settings.json 旧值兼容迁移
-      autoTriage: ctx.config.get?.("autoTriage") ?? state.settings?.autoTriage ?? true,
+      autoTriage: ctx.config?.get?.("autoTriage") ?? state.settings?.autoTriage ?? true,
     };
     state.sessionId = sessionIdOf(c);
     return c.json(state);
   });
 
   // ── E5：全文按需读取（AI 侧 / 后续全文阅读用） ────────────
-  app.get("/literature/fulltext", (c) => {
+  app.get("/literature/fulltext", (/** @type {any} */ c) => {
     const id = c.req.query("id") || "";
     const lit = store.read("literature");
     const entry = (lit.entries || []).find((e) => e.zoteroKey === id || e.id === id);
@@ -61,19 +74,20 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── E4：一键清除失效镜像（zoteroGone 条目，用户主动操作） ──
-  app.post("/literature/purge-gone", (c) => {
+  app.post("/literature/purge-gone", (/** @type {any} */ c) => {
     const lit = store.read("literature");
     const gone = (lit.entries || []).filter((e) => e.zoteroGone);
     if (gone.length === 0) return c.json({ ok: true, purged: 0 });
     store.update("literature", undefined, (cur) => ({
-      entries: (cur.entries || []).filter((e) => !e.zoteroGone),
+      entries: /** @type {any[]} */ (cur.entries || []).filter((e) => !e.zoteroGone),
     }));
     return c.json({ ok: true, purged: gone.length });
   });
 
   // ── 增量水位线（面板轮询） ───────────────────────────────
-  app.get("/changes", (c) => {
+  app.get("/changes", (/** @type {any} */ c) => {
     const sinceRaw = c.req.query("since");
+    /** @type {Record<string, number>} */
     let since = {};
     if (sinceRaw) {
       try {
@@ -81,6 +95,7 @@ export default function registerApiRoutes(app, ctx) {
       } catch {}
     }
     const updates = store.getUpdates();
+    /** @type {Record<string, number>} */
     const changed = {};
     for (const [key, value] of Object.entries(updates)) {
       if ((since[key] || 0) !== value) changed[key] = value;
@@ -90,10 +105,11 @@ export default function registerApiRoutes(app, ctx) {
 
   // ── 通用读写（乐观锁） ────────────────────────────────────
   for (const name of WRITABLE) {
-    app.get(`/${name}`, (c) => c.json(store.read(name)));
+    app.get(`/${name}`, (/** @type {any} */ c) => c.json(store.read(name)));
 
-    app.put(`/${name}`, async (c) => {
-      let body;
+    app.put(`/${name}`, async (/** @type {any} */ c) => {
+      /** @type {Record<string, any>} */
+    let body;
       try {
         body = await c.req.json();
       } catch {
@@ -107,7 +123,7 @@ export default function registerApiRoutes(app, ctx) {
       if (name === "literature" && Array.isArray(data?.entries)) {
         const current = store.read("literature");
         const curMirror = (current.entries || []).filter((e) => e.readOnly);
-        const newMirror = data.entries.filter((e) => e.readOnly);
+        const newMirror = /** @type {any[]} */ (data.entries).filter((e) => e.readOnly);
         const mirrorTouched =
           curMirror.length !== newMirror.length ||
           curMirror.some((e) => {
@@ -126,9 +142,9 @@ export default function registerApiRoutes(app, ctx) {
       // autoTriage 开关（宿主配置优先，回退 settings.json 旧值；默认 true）：关闭则跳过自动巡检
       if (name === "worklog" && result.ok) {
         const settings = readSettings(ctx, store);
-        const autoTriage = ctx.config.get?.("autoTriage") ?? settings.autoTriage ?? true;
+        const autoTriage = ctx.config?.get?.("autoTriage") ?? settings.autoTriage ?? true;
         if (autoTriage) {
-          triageWorklog(ctx, store).catch((err) => ctx?.log?.warn(`triage after write failed: ${err?.message || err}`));
+          triageWorklog(ctx, store).catch((err) => ctx?.log?.warn(`triage after write failed: ${err instanceof Error ? err.message : String(err)}`));
         }
       }
       return c.json({ ok: true, data: result.data });
@@ -138,15 +154,19 @@ export default function registerApiRoutes(app, ctx) {
   // ── 批量导入（仪器表格粘贴 → worklog 记录）───────────────
   // dryRun=true 只解析预览；否则解析 + 直接落库（等价表单录入，手工粘贴本身是显式操作）
   // 落库后巡检照常触发（autoTriage 开关语义与 app.put /worklog 一致）
-  app.post("/worklog/import", async (c) => {
+  app.post("/worklog/import", async (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     let body = {};
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
-    const text = String(body?.text || "");
-    const dryRun = Boolean(body?.dryRun);
+    const bodyCheck = WorklogImportBodySchema.safeParse(body ?? {});
+    if (!bodyCheck.success) {
+      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
+    }
+    const { text, dryRun = false } = bodyCheck.data;
     if (!text.trim()) {
       return c.json({ error: "empty_text" }, 400);
     }
@@ -175,13 +195,13 @@ export default function registerApiRoutes(app, ctx) {
       ...(r.system ? { system: r.system } : {}),
     }));
     const result = store.update("worklog", undefined, (cur) => ({
-      entries: [...(cur.entries || []), ...entries],
+      entries: [...(/** @type {any[]} */ (cur.entries || [])), ...entries],
     }));
     if (result.ok) {
       const settings = readSettings(ctx, store);
-      const autoTriage = ctx.config.get?.("autoTriage") ?? settings.autoTriage ?? true;
+      const autoTriage = ctx.config?.get?.("autoTriage") ?? settings.autoTriage ?? true;
       if (autoTriage) {
-        triageWorklog(ctx, store).catch((err) => ctx?.log?.warn(`triage after import failed: ${err?.message || err}`));
+        triageWorklog(ctx, store).catch((err) => ctx?.log?.warn(`triage after import failed: ${err instanceof Error ? err.message : String(err)}`));
       }
     }
     return c.json({
@@ -194,35 +214,41 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 实验记录 AI 巡检（手动触发） ─────────────────────────
-  app.post("/worklog/triage", async (c) => {
+  app.post("/worklog/triage", async (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     let body = {};
     try {
       body = await c.req.json();
     } catch {}
     const force = Boolean(body?.force);
-    const result = await triageWorklog(ctx, store, { force }).catch((err) => ({
+    const result = /** @type {any} */ (await triageWorklog(ctx, store, { force }).catch((err) => ({
       error: "triage_failed",
-      detail: err?.message || String(err),
-    }));
+      detail: err instanceof Error ? err.message : String(err),
+    })));
     return c.json({ ok: !result?.error, ...result });
   });
 
   // ── literature 追加式（扫描入库共用） ────────────────
-  app.post("/literature/append", async (c) => {
+  app.post("/literature/append", async (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     let body;
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
-    const items = Array.isArray(body?.entries) ? body.entries : [];
+    const bodyCheck = LiteratureAppendBodySchema.safeParse(body ?? {});
+    if (!bodyCheck.success) {
+      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
+    }
+    const items = bodyCheck.data.entries;
     if (items.length === 0) return c.json({ ok: true, appended: 0 });
     const result = store.append("literature", items);
     return c.json({ ok: true, appended: result.appended, data: result.data });
   });
 
   // ── E5：手动触发 OpenAlex 引用数补全（多轮铺完） ──────────
-  app.post("/literature/enrich-cites", async (c) => {
+  app.post("/literature/enrich-cites", async (/** @type {any} */ c) => {
     let processed = 0;
     for (let round = 0; round < 8; round++) {
       const r = await enrichCitationCounts(ctx, store, 5);
@@ -234,10 +260,10 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 文献扫描（手动） ──────────────────────────────────────
-  app.post("/scan", async (c) => {
+  app.post("/scan", async (/** @type {any} */ c) => {
     try {
       const { entries, warnings, sourceStats } = await scanAllSources(ctx, store);
-      const enriched = entries.map((e, index) => ({
+      const enriched = /** @type {any[]} */ (entries).map((e, index) => ({
         id: `lit_scan_${Date.now().toString(36)}_${index}`,
         addedAt: store.now(),
         status: "new",
@@ -253,13 +279,14 @@ export default function registerApiRoutes(app, ctx) {
         sourceStats,
       });
     } catch (err) {
-      ctx.log.error("scan failed:", err.message);
-      return c.json({ error: "scan_failed", detail: err.message }, 500);
+      ctx.log?.error("scan failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "scan_failed", detail: err instanceof Error ? err.message : String(err) }, 500);
     }
   });
 
   // ── 文献移除（用户操作：待整理条目单条/清空；Zotero 镜像只读拒绝） ──
-  app.delete("/literature", async (c) => {
+  app.delete("/literature", async (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     let body = {};
     try { body = await c.req.json(); } catch {}
     const doc = store.read("literature");
@@ -277,7 +304,7 @@ export default function registerApiRoutes(app, ctx) {
     );
     if (removable.size === 0) return c.json({ ok: true, removed: 0 });
     const result = store.update("literature", doc.version, (cur) => ({
-      entries: (cur.entries || []).filter((e) => typeof e.id !== "string" || !removable.has(e.id)),
+      entries: /** @type {any[]} */ (cur.entries || []).filter((e) => typeof e.id !== "string" || !removable.has(e.id)),
     }));
     if (!result.ok) {
       return c.json({ error: "conflict", hint: "文献库已变更，请刷新后重试" }, 409);
@@ -286,20 +313,21 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── E3：手动增强（✨ AI 摘要：生成/翻译摘要 + 提取关键词；fire-and-forget 启动新一轮循环铺完） ──
-  app.post("/literature/enhance-pdfs", async (c) => {
+  app.post("/literature/enhance-pdfs", async (/** @type {any} */ c) => {
     runEnhancementLoop(ctx, store)
       .then((r) => {
         store.bump("literature");
-        ctx.log.info(`manual enhance loop done: ${r.rounds} round(s)`);
+        ctx.log?.info(`manual enhance loop done: ${r.rounds} round(s)`);
       })
-      .catch((err) => ctx.log.warn("manual enhance failed:", err.message));
+      .catch((err) => ctx.log?.warn("manual enhance failed:", err instanceof Error ? err.message : String(err)));
     return c.json({ ok: true, started: true, hint: "补全已在后台启动，约 10-20 分钟完成，稍后刷新面板查看" });
   });
 
   // ── Zotero 状态探测（面板标注用，5 分钟节流） ─────────────────
+  /** @type {{at: number, result: any}} */
   let zoteroProbeCache = { at: 0, result: null };
-  app.get("/sources/zotero", async (c) => {
-    const port = ctx.config.get?.("zoteroPort") ?? 23119;
+  app.get("/sources/zotero", async (/** @type {any} */ c) => {
+    const port = ctx.config?.get?.("zoteroPort") ?? 23119;
     const now = Date.now();
     if (zoteroProbeCache.result && now - zoteroProbeCache.at < 5 * 60 * 1000) {
       return c.json({ port, ...zoteroProbeCache.result });
@@ -310,15 +338,15 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // 手动重试探测（绕过节流缓存）
-  app.post("/sources/zotero/probe", async (c) => {
-    const port = ctx.config.get?.("zoteroPort") ?? 23119;
+  app.post("/sources/zotero/probe", async (/** @type {any} */ c) => {
+    const port = ctx.config?.get?.("zoteroPort") ?? 23119;
     const probe = await zoteroProbe(ctx, port);
     zoteroProbeCache = { at: Date.now(), result: probe };
     return c.json({ port, ...probe });
   });
 
   // ── P1：指标时间线（从实验记录抽取性能数值，按体系/时间分组） ──
-  app.get("/metrics/series", (c) => {
+  app.get("/metrics/series", (/** @type {any} */ c) => {
     const worklog = store.read("worklog");
     const literature = store.read("literature");
     const result = buildMetricsSeries(worklog.entries || [], literature.entries || []);
@@ -326,18 +354,24 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 设置抽屉：指标目标值（用户自设的 ZT/PF 等目标线，持久化到 settings） ──
-  app.post("/settings/metrics", async (c) => {
+  app.post("/settings/metrics", async (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     let body;
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
-    const targets = body?.targets;
+    const bodyCheck = SettingsMetricsBodySchema.safeParse(body ?? {});
+    if (!bodyCheck.success) {
+      return c.json({ error: "missing_targets", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
+    }
+    const targets = bodyCheck.data.targets;
     if (!targets || typeof targets !== "object") {
       return c.json({ error: "missing_targets" }, 400);
     }
     // 仅保留数值或 null，过滤非法输入
+    /** @type {Record<string, number|null>} */
     const clean = {};
     for (const [k, v] of Object.entries(targets)) {
       if (v === null || v === undefined) clean[k] = null;
@@ -348,14 +382,19 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 设置抽屉：检索年份窗口（默认近 N 年，在线检索/自动搜集共用） ──
-  app.post("/settings/search-window", async (c) => {
+  app.post("/settings/search-window", async (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     let body;
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
-    const years = Number(body?.years);
+    const bodyCheck = SearchWindowBodySchema.safeParse(body ?? {});
+    if (!bodyCheck.success) {
+      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
+    }
+    const years = Number(bodyCheck.data.years);
     if (!Number.isInteger(years) || years < 1 || years > 30) {
       return c.json({ error: "invalid_years", message: "年份窗口需为 1-30 的整数" }, 400);
     }
@@ -365,29 +404,39 @@ export default function registerApiRoutes(app, ctx) {
 
   // ── 设置抽屉：实验记录自动巡检开关（autoTriage，默认 true）──
   // 仅控制「写入后自动巡检」；手动 force 巡检（POST /worklog/triage）不受开关限制
-  app.post("/settings/auto-triage", async (c) => {
+  app.post("/settings/auto-triage", async (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     let body = {};
     try { body = await c.req.json(); } catch {}
-    const enabled = body?.enabled === true;
+    const bodyCheck = AutoTriageBodySchema.safeParse(body ?? {});
+    if (!bodyCheck.success) {
+      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
+    }
+    const enabled = bodyCheck.data.enabled === true;
     try {
-      ctx.config.set?.("autoTriage", enabled);
+      ctx.config?.set?.("autoTriage", enabled);
     } catch (err) {
-      ctx.log?.warn?.(`auto-triage config set failed: ${err?.message || err}`);
+      ctx.log?.warn?.(`auto-triage config set failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     return c.json({ ok: true, autoTriage: enabled });
   });
 
   // ── 设置抽屉：会话绑定管理 ────────────────────────────────
-  app.get("/binding", (c) => c.json(store.read("binding")));
+  app.get("/binding", (/** @type {any} */ c) => c.json(store.read("binding")));
 
-  app.post("/binding", async (c) => {
+  app.post("/binding", async (/** @type {any} */ c) => {
+    /** @type {Record<string, any>} */
     let body;
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
-    const { sessionId, sessionPath, source = "manual" } = body || {};
+    const bodyCheck = BindingBodySchema.safeParse(body ?? {});
+    if (!bodyCheck.success) {
+      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
+    }
+    const { sessionId, sessionPath, source = "manual" } = bodyCheck.data;
     if (!sessionId) {
       return c.json({ error: "missing_sessionId" }, 400);
     }
@@ -401,12 +450,12 @@ export default function registerApiRoutes(app, ctx) {
     store.write("binding", next);
     try {
       ctx.bus?.emit?.({ type: "materials-research-copilot:binding-changed", sessionId }, null);
-      ctx.appEvents.emit("binding-changed", { sessionId });
+      ctx.appEvents?.emit("binding-changed", { sessionId });
     } catch {}
     return c.json({ ok: true, binding: next, previous: current });
   });
 
-  app.delete("/binding", (c) => {
+  app.delete("/binding", (/** @type {any} */ c) => {
     const current = store.read("binding");
     store.write("binding", {
       sessionId: null,
@@ -416,19 +465,19 @@ export default function registerApiRoutes(app, ctx) {
     });
     try {
       ctx.bus?.emit?.({ type: "materials-research-copilot:binding-changed", sessionId: null }, null);
-      ctx.appEvents.emit("binding-changed", { sessionId: null });
+      ctx.appEvents?.emit("binding-changed", { sessionId: null });
     } catch {}
     return c.json({ ok: true, previous: current });
   });
 
   // ── 快照/回退 ─────────────────────────────────────────────
-  app.get("/snapshots/:name", (c) => {
+  app.get("/snapshots/:name", (/** @type {any} */ c) => {
     const name = c.req.param("name");
     if (!WRITABLE.has(name)) return c.json({ error: "invalid_target" }, 400);
     return c.json({ snapshots: store.listSnapshots(name) });
   });
 
-  app.post("/snapshots/:name/rollback", async (c) => {
+  app.post("/snapshots/:name/rollback", async (/** @type {any} */ c) => {
     const name = c.req.param("name");
     if (!WRITABLE.has(name)) return c.json({ error: "invalid_target" }, 400);
     let toVersion;

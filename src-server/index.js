@@ -21,6 +21,8 @@ const PENDING_DRAFT_TTL_MS = 30 * 60 * 1000; // 待确认草稿 TTL：超时视�
 /**
  * 关键词判定（AI 工作流确认/拒绝）：返回 'confirm' | 'reject' | 'other'。
  * 忽略大小写与首尾空白，整词相等或前缀匹配；拒绝词优先判定（“不用”/“不要”以「不」开头）。
+ * @param {unknown} text
+ * @returns {"confirm"|"reject"|"other"}
  */
 function matchVerdict(text) {
   const s = String(text || "").trim().toLowerCase();
@@ -37,8 +39,14 @@ function matchVerdict(text) {
  * （取自 event 携带的 sessionId，缺失时回退到绑定信息）；sessionPath 是 legacy locator，
  * 仅作兼容兜底一并带上（宿主要求对已有 session 的操作必须携带 sessionId/sessionRef）。
  */
+/**
+ * @param {any} event
+ * @param {string|null|undefined} sessionPath
+ * @param {string|null} [fallbackSessionId]
+ * @returns {{sessionId?: string, sessionPath: string|null}}
+ */
 function buildSessionTarget(event, sessionPath, fallbackSessionId = null) {
-  const trimmed = (v) => (typeof v === "string" ? v.trim() : "");
+  const trimmed = (/** @type {unknown} */ v) => (typeof v === "string" ? v.trim() : "");
   const sessionId = trimmed(event?.sessionId) || trimmed(fallbackSessionId) || null;
   return sessionId
     ? { sessionId, sessionPath: sessionPath || null }
@@ -46,6 +54,17 @@ function buildSessionTarget(event, sessionPath, fallbackSessionId = null) {
 }
 
 export default class MaterialsResearchCopilotPlugin {
+  /** @type {import("./server/types.js").ToolCtx} */
+  ctx = /** @type {any} */ (undefined);
+  /** @type {(cleanup: (() => void) | undefined) => void} */
+  register = /** @type {any} */ (undefined);
+  /** @type {import("./server/types.js").StoreApi} */
+  _store = /** @type {any} */ (undefined);
+  /** @type {{binding: import("./server/types.js").BindingDoc|null, lastAutoCollectAt: number}} */
+  _state = /** @type {any} */ (undefined);
+  /** @type {{draft: any, sessionPath: string|null, ts: number}|null} */
+  _pendingDraft = /** @type {any} */ (undefined);
+
   async onload() {
     const ctx = this.ctx;
     const register = this.register;
@@ -60,11 +79,11 @@ export default class MaterialsResearchCopilotPlugin {
     // 注意：bus.subscribe 返回的句柄 / setInterval 返回的 Timeout 都含循环引用（_idlePrev/_idleNext），
     // 不能挂到插件实例 this 上（宿主在安装/启用时会序列化插件实例，遇到 Timeout 会抛
     // "Converting circular structure to JSON"）。全部收为局部变量，仅把 cleanup 函数交给 register()。
-    const unsubSession = ctx.bus.subscribe(
-      (event, sessionPath) => {
+    const unsubSession = ctx.bus?.subscribe(
+      (/** @type {any} */ event, /** @type {any} */ sessionPath) => {
         // _onSessionEvent 为 async：显式接管 rejection（fire-and-forget，不让未处理拒绝逃逸）
         this._onSessionEvent(event, sessionPath).catch((err) => {
-          ctx.log.warn("session event handling failed:", err.message);
+          ctx.log?.warn("session event handling failed:", err instanceof Error ? err.message : String(err));
         });
       },
       { types: ["session_user_message"] }
@@ -72,7 +91,7 @@ export default class MaterialsResearchCopilotPlugin {
     register(() => typeof unsubSession === "function" && unsubSession());
 
     // ── 内部事件：绑定变化 → 重新加载 ──
-    const unsubBinding = ctx.bus.subscribe(
+    const unsubBinding = ctx.bus?.subscribe(
       () => this._reloadBinding(),
       { types: ["materials-research-copilot:binding-changed"] }
     );
@@ -87,7 +106,7 @@ export default class MaterialsResearchCopilotPlugin {
     this._reloadBinding();
     this._syncZoteroNow(true).catch(() => {}); // 启动后立即同步一次（失败静默，定时器会重试）；同步后跑增强循环（摘要+关键词铺完）
 
-    ctx.log.info("materials-research-copilot lifecycle loaded");
+    ctx.log?.info("materials-research-copilot lifecycle loaded");
   }
 
   async _syncZoteroNow(firstRun = false) {
@@ -96,20 +115,20 @@ export default class MaterialsResearchCopilotPlugin {
     try {
       const result = await syncZotero(ctx, this._store);
       if (result.ok) {
-        ctx.log.info(`zotero sync: ${result.replaced} entries mirrored`);
+        ctx.log?.info(`zotero sync: ${result.replaced} entries mirrored`);
         // 增强循环：PDF 摘要/翻译/关键词逐批铺完（异步，不阻塞；直到无目标或本轮零产出）
         runEnhancementLoop(ctx, this._store)
-          .then((r) => ctx.log.info(`literature enhance loop: ${r.rounds} round(s)`))
-          .catch((err) => ctx.log.warn("literature enhance failed:", err.message));
+          .then((r) => ctx.log?.info(`literature enhance loop: ${r.rounds} round(s)`))
+          .catch((err) => ctx.log?.warn("literature enhance failed:", err instanceof Error ? err.message : String(err)));
         // E5：OpenAlex 引用数补全（异步节流 5 条/批）
         enrichCitationCounts(ctx, this._store, 5)
-          .then((r) => ctx.log.info(`citation enrich: ${r.processed} queried`))
-          .catch((err) => ctx.log.warn("citation enrich failed:", err.message));
+          .then((r) => ctx.log?.info(`citation enrich: ${r.processed} queried`))
+          .catch((err) => ctx.log?.warn("citation enrich failed:", err instanceof Error ? err.message : String(err)));
       } else {
-        ctx.log.info(`zotero sync skipped: ${result.code || result.error}`);
+        ctx.log?.info(`zotero sync skipped: ${result.code || result.error}`);
       }
     } catch (err) {
-      ctx.log.warn("zotero sync failed:", err.message);
+      ctx.log?.warn("zotero sync failed:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -134,6 +153,10 @@ export default class MaterialsResearchCopilotPlugin {
 
   // ── 会话事件：AI 记录状态机 + 节流同步 Zotero 本地库 ──────────
 
+  /**
+   * @param {any} event
+   * @param {string|null|undefined} sessionPath
+   */
   async _onSessionEvent(event, sessionPath) {
     const ctx = this.ctx;
     const boundPath = this._boundSessionPath();
@@ -141,17 +164,17 @@ export default class MaterialsResearchCopilotPlugin {
 
     // 隐私承诺（文件头）：autoCollectEnabled=false 时整体跳过会话监听逻辑——
     // 不读消息内容、不触发 AI 生成、不做 Zotero 同步（AI 生成与自动收集同受此开关控制）
-    const autoCollect = ctx.config.get?.("autoCollectEnabled") ?? true;
+    const autoCollect = ctx.config?.get?.("autoCollectEnabled") ?? true;
     if (!autoCollect) return;
 
     const text = String(event?.message?.text || "").trim();
-    const genEnabled = ctx.config.get?.("aiWorklogGen") ?? true;
+    const genEnabled = ctx.config?.get?.("aiWorklogGen") ?? true;
 
     // 1) 待确认态（TTL 内）：先把消息解释为对草稿的确认/拒绝
     if (genEnabled && this._pendingDraft) {
       if (Date.now() - (this._pendingDraft.ts || 0) >= PENDING_DRAFT_TTL_MS) {
         // 草稿过期：丢弃，后续消息按空闲态处理
-        ctx.log.info("pending worklog draft expired (>30min), discarded");
+        ctx.log?.info("pending worklog draft expired (>30min), discarded");
         this._pendingDraft = null;
       } else {
         const verdict = matchVerdict(text);
@@ -164,7 +187,7 @@ export default class MaterialsResearchCopilotPlugin {
           await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
             role: "assistant",
             text: res.ok ? "已记录 ✅" : `记录失败：${res.reason}`,
-          }).catch((err) => ctx.log.warn("ai worklog notify failed:", err.message));
+          }).catch((err) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
           return;
         }
         if (verdict === "reject") {
@@ -172,7 +195,7 @@ export default class MaterialsResearchCopilotPlugin {
           await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
             role: "assistant",
             text: "好的，已取消记录。",
-          }).catch((err) => ctx.log.warn("ai worklog notify failed:", err.message));
+          }).catch((err) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
           return;
         }
         // 其它消息（verdict=other）：维持待确认（首版忽略，不重总结），但不在此早退——
@@ -190,19 +213,23 @@ export default class MaterialsResearchCopilotPlugin {
     //    （待确认期间不重复生成，避免覆盖单槽草稿；不阻塞消息流）
     if (genEnabled && !this._pendingDraft && text.includes("记录")) {
       this._maybeGenerateWorklog(text, sessionPath).catch((err) => {
-        ctx.log.warn("ai worklog generate failed:", err.message);
+        ctx.log?.warn("ai worklog generate failed:", err instanceof Error ? err.message : String(err));
       });
     }
 
     // 原有 Zotero 本地库同步
     this._syncZoteroNow().catch((err) => {
-      ctx.log.warn("auto zotero sync failed:", err.message);
+      ctx.log?.warn("auto zotero sync failed:", err instanceof Error ? err.message : String(err));
     });
   }
 
-  /** 生成实验记录草稿并向会话询问确认（fire-and-forget 的可等待实现）。 */
+  /** 生成实验记录草稿并向会话询问确认（fire-and-forget 的可等待实现）。
+   * @param {string} text
+   * @param {string|null|undefined} sessionPath
+   */
   async _maybeGenerateWorklog(text, sessionPath) {
     const ctx = this.ctx;
+    /** @type {Array<{id: string, name: string}>} */
     let taskList = [];
     try {
       // 甘特任务提示：让 LLM 能把 taskId 关联到已有甘特任务（store.read 自带默认兜底 { tasks: [] }）
@@ -210,17 +237,17 @@ export default class MaterialsResearchCopilotPlugin {
     } catch {}
 
     // prompt 缺失/输入为空/LLM 失败或无法解析时返回 null；抛错则由调用方 .catch 记日志
-    const draft = await generateDraft(ctx, { text, taskList });
+    const draft = /** @type {any} */ (await generateDraft(ctx, { text, taskList }));
     if (!draft) {
       await sendSessionMessage(ctx, buildSessionTarget(null, sessionPath, this._state.binding?.sessionId), {
         role: "assistant",
         text: "没能从这条消息识别出可记录的实验内容，稍后再试。",
-      }).catch((err) => ctx.log.warn("ai worklog notify failed:", err.message));
+      }).catch((err) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
       return;
     }
 
     // 设为待确认（单槽：同一时刻至多一个待确认草稿；发送失败仅记日志，草稿保留，用户下条回复仍可确认）
-    this._pendingDraft = { draft, sessionPath, ts: Date.now() };
+    this._pendingDraft = { draft, sessionPath: sessionPath ?? null, ts: Date.now() };
     const summary = [
       draft.sampleId ? `样品：${draft.sampleId}` : null,
       draft.system ? `体系：${draft.system}` : null,
@@ -230,6 +257,6 @@ export default class MaterialsResearchCopilotPlugin {
     await sendSessionMessage(ctx, buildSessionTarget(null, sessionPath, this._state.binding?.sessionId), {
       role: "assistant",
       text: `检测到实验记录草稿：\n${summary}\n\n回复「记录」确认，回复「不」取消。`,
-    }).catch((err) => ctx.log.warn("ai worklog notify failed:", err.message));
+    }).catch((err) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
   }
 }

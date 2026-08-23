@@ -3,16 +3,13 @@ import { api } from '../api';
 import { GanttChart, type GanttTask, type ActualBlock } from '../components/GanttChart';
 import { CalendarView, type CalendarEvent } from '../components/CalendarView';
 import { ConfirmButton } from '../components/ConfirmButton';
+import { newId } from '../lib/ids';
 
 type Props = {
   state: any;
   onStateChange: () => Promise<void>;
   showToast: (msg: string, opts?: { error?: boolean }) => void;
 };
-
-function newId(prefix: string) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-}
 
 export function SchedulePanel({ state, onStateChange, showToast }: Props) {
   const gantt = state?.gantt || { version: 0, tasks: [] };
@@ -32,6 +29,10 @@ export function SchedulePanel({ state, onStateChange, showToast }: Props) {
       return { id: 'act_' + e.id, name: String(e.content || '').slice(0, 20), start, end, kind: 'actual' as const };
     });
   const events: CalendarEvent[] = calendar.events || [];
+  // 有实验记录的日期集合：供日历叠加「实验」标记，对照实验与日程
+  const worklogDates: string[] = (state?.worklog?.entries || [])
+    .filter((e: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(e.date || '')))
+    .map((e: any) => String(e.date));
   const [newTaskName, setNewTaskName] = useState('');
   const [tab, setTab] = useState<'gantt' | 'calendar'>('gantt');
   // 滑块拖动中只改本地预览，松手才落库（避免拖动过程连续写盘的版本冲突风暴）
@@ -82,7 +83,7 @@ export function SchedulePanel({ state, onStateChange, showToast }: Props) {
   };
 
   return (
-    <div className="mrc-schedule">
+    <div className="mrc-schedule mrc-schedule-stacked">
       <div className="mrc-panel-section">
         <div className="mrc-tabs">
           <button className={`mrc-tab ${tab === 'gantt' ? 'active' : ''}`} onClick={() => setTab('gantt')}>甘特图</button>
@@ -100,14 +101,13 @@ export function SchedulePanel({ state, onStateChange, showToast }: Props) {
         )}
 
         {tab === 'calendar' && (
-          <CalendarView events={events} tasks={tasks} onSave={saveCalendar} />
+          <CalendarView events={events} tasks={tasks} onSave={saveCalendar} worklogDates={worklogDates} />
         )}
       </div>
 
-      <div className="mrc-schedule-side">
-        <div className="mrc-panel-section">
-          <div className="mrc-section-head">
-            <span className="mrc-section-title">任务清单</span>
+      <div className="mrc-panel-section mrc-task-panel">
+        <div className="mrc-section-head">
+          <span className="mrc-section-title">任务清单</span>
             <span className="mrc-count">{tasks.length}</span>
           </div>
           <div className="mrc-field-row">
@@ -164,7 +164,6 @@ export function SchedulePanel({ state, onStateChange, showToast }: Props) {
             })}
           </div>
         </div>
-      </div>
     </div>
   );
 }

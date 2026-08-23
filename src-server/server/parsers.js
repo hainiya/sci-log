@@ -6,31 +6,41 @@
 import fs from "node:fs";
 import path from "node:path";
 
+/** @param {unknown} value @returns {string} */
 function normalizeText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+/** @param {unknown} text @returns {string} */
 function firstLine(text) {
   const line = String(text || "").split(/\r?\n/).find((l) => l.trim());
   return line ? line.trim() : "";
 }
 
+/** @param {unknown} text @returns {string|null} */
 function guessYear(text) {
   const match = String(text || "").match(/(?:19|20)\d{2}(?!\d)/);
   return match ? match[0] : null;
 }
 
-/** 从任意文本中提取 DOI */
+/** 从任意文本中提取 DOI
+ * @param {unknown} text
+ * @returns {string|null}
+ */
 export function extractDoi(text) {
   const match = String(text || "").match(/10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+/);
   return match ? match[0].replace(/[.;]$/, "") : null;
 }
 
-/** RIS 解析：TY/.../ER 块 */
+/** RIS 解析：TY/.../ER 块
+ * @param {unknown} text
+ * @returns {Array<import("./types.js").LiteratureEntry>}
+ */
 export function parseRis(text) {
   const records = [];
   const blocks = String(text || "").split(/\r?\nER\s*[- ]/);
   for (const block of blocks) {
+    /** @type {Record<string, string[]>} */
     const fields = {};
     for (const line of block.split(/\r?\n/)) {
       const m = line.match(/^([A-Z][A-Z0-9]{1,2})\s*-\s*(.*)$/);
@@ -62,7 +72,10 @@ export function parseRis(text) {
   return records;
 }
 
-/** BibTeX 解析：@type{key, field = {...}}（花括号平衡扫描，支持嵌套） */
+/** BibTeX 解析：@type{key, field = {...}}（花括号平衡扫描，支持嵌套）
+ * @param {unknown} text
+ * @returns {Array<import("./types.js").LiteratureEntry>}
+ */
 export function parseBibtex(text) {
   const records = [];
   const src = String(text || "");
@@ -104,6 +117,7 @@ export function parseBibtex(text) {
     if (end === -1) break;
     const fieldsRaw = src.slice(keyEnd + 1, end);
     // 字段扫描：支持嵌套花括号值（LaTeX 命令/化学式）、引号值、裸数字
+    /** @type {Record<string, string>} */
     const fields = {};
     let pos = 0;
     while (pos < fieldsRaw.length) {
@@ -184,12 +198,16 @@ export function parseBibtex(text) {
   return records;
 }
 
-/** EndNote 标签格式解析（多为 .enw，也兼容 RefWorks 的 RT 开头） */
+/** EndNote 标签格式解析（多为 .enw，也兼容 RefWorks 的 RT 开头）
+ * @param {unknown} text
+ * @returns {Array<import("./types.js").LiteratureEntry>}
+ */
 export function parseEndnote(text) {
   const records = [];
   const blocks = String(text || "").split(/\r?\n\r?\n/);
   for (const block of blocks) {
     if (!block.trim()) continue;
+    /** @type {Record<string, string[]>} */
     const fields = {};
     for (const line of block.split(/\r?\n/)) {
       const m = line.match(/^([A-Za-z0-9]+)\s+(.*)$/);
@@ -221,6 +239,7 @@ export function parseEndnote(text) {
 
 export const SUPPORTED_EXTENSIONS = new Set([".ris", ".bib", ".bibtex", ".enw", ".txt"]);
 
+/** @param {string} ext @returns {"ris"|"bibtex"|"endnote"|"txt"|null} */
 export function detectFormat(ext) {
   if (ext === ".ris") return "ris";
   if (ext === ".bib" || ext === ".bibtex") return "bibtex";
@@ -229,7 +248,11 @@ export function detectFormat(ext) {
   return null;
 }
 
-/** 解析一个题录文件内容（按扩展名路由） */
+/** 解析一个题录文件内容（按扩展名路由）
+ * @param {string} fileName
+ * @param {unknown} content
+ * @returns {Array<import("./types.js").LiteratureEntry>}
+ */
 export function parseFileContent(fileName, content) {
   const ext = path.extname(fileName).toLowerCase();
   const format = detectFormat(ext);
@@ -266,7 +289,10 @@ export function parseFileContent(fileName, content) {
   return [];
 }
 
-/** 从 PDF 文件名提取元数据（仅文件名启发式，不解析全文） */
+/** 从 PDF 文件名提取元数据（仅文件名启发式，不解析全文）
+ * @param {string} fileName
+ * @returns {{title: string, year: string|null, fileName: string}}
+ */
 export function metadataFromPdfFileName(fileName) {
   const base = path.basename(fileName, path.extname(fileName));
   const clean = base.replace(/[_]+/g, " ").replace(/\s+/g, " ").trim();
@@ -284,7 +310,10 @@ export function metadataFromPdfFileName(fileName) {
   };
 }
 
-/** 从文件读取并解析题录 */
+/** 从文件读取并解析题录
+ * @param {string} filePath
+ * @returns {Array<import("./types.js").LiteratureEntry>}
+ */
 export function parseFile(filePath) {
   try {
     const content = fs.readFileSync(filePath, "utf-8");

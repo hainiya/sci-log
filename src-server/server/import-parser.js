@@ -21,11 +21,14 @@ const COL = {
   date: /^(date|日期)$/i,
   sampleId: /^(sampleid|sample|样品|样品号|样品编号|试样)$/i,
   system: /^(system|体系|材料体系|材料)$/i,
-  content: /^(content|备注|说明|note|notes)$/i,
+  content: /^(content|备注|说明|内容|note|notes)$/i,
   temp: /^(t|temp|temperature|温度|测试温度)$/i,
 };
 
-/** 表头 → { base, unitHint }：剥括号单位（Seebeck(μV/K) / T(K) / 电导率（S/cm）） */
+/** 表头 → { base, unitHint }：剥括号单位（Seebeck(μV/K) / T(K) / 电导率（S/cm））
+ * @param {unknown} raw
+ * @returns {{ base: string, unitHint: string }}
+ */
 function headerInfo(raw) {
   const h = String(raw ?? "").trim();
   const m = h.match(/^([^(（]+)[(（]([^)）]+)[)）]$/);
@@ -33,11 +36,16 @@ function headerInfo(raw) {
   return { base: h, unitHint: "" };
 }
 
+/** @param {unknown} v @returns {boolean} */
 function isBareNumber(v) {
-  return /^[-+]?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(v);
+  return /^[-+]?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(String(v));
 }
 
-/** 温度单元格解析：归一为整数 K。单元格自带单位优先；裸数字按表头单位暗示。 */
+/** 温度单元格解析：归一为整数 K。单元格自带单位优先；裸数字按表头单位暗示。
+ * @param {unknown} cell
+ * @param {string} headerHint
+ * @returns {number|null}
+ */
 function parseTempValue(cell, headerHint) {
   const s = String(cell ?? "").trim();
   if (!s) return null;
@@ -53,7 +61,7 @@ function parseTempValue(cell, headerHint) {
   return null;
 }
 
-/** 剥离单元格首尾引号（CSV "..." / 中文全角引号） */
+/** 剥离单元格首尾引号（CSV "..." / 中文全角引号） @param {unknown} s @returns {string} */
 function stripQuotes(s) {
   let v = String(s ?? "").trim();
   if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("“") && v.endsWith("”")))) {
@@ -62,7 +70,10 @@ function stripQuotes(s) {
   return v;
 }
 
-/** 分隔符检测：tab 优先（Excel 粘贴），其次半角逗号，再次全角逗号 */
+/** 分隔符检测：tab 优先（Excel 粘贴），其次半角逗号，再次全角逗号
+ * @param {string} headerLine
+ * @returns {string}
+ */
 function detectDelimiter(headerLine) {
   if (headerLine.includes("\t")) return "\t";
   if (headerLine.includes(",")) return ",";
@@ -70,21 +81,54 @@ function detectDelimiter(headerLine) {
   return "\t";
 }
 
+/** 引号感知切分：遇 " 进入引号态，"" 为转义双引号，delimiter 在引号外才切分（O-11）
+ * @param {unknown} line
+ * @param {string} delimiter
+ * @returns {string[]}
+ */
 function splitRow(line, delimiter) {
-  return String(line ?? "").split(delimiter).map((c) => stripQuotes(c));
+  const s = String(line ?? "");
+  const cells = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (s[i + 1] === '"') {
+          cur += '"';
+          i += 1; // 跳过转义引号第二个
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      cells.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur);
+  return cells.map((c) => stripQuotes(c));
 }
 
 /**
  * 解析粘贴文本。
  * @param {string} text 粘贴的表格文本（表头行 + 数据行）
  * @param {{today?: string}} [opts] 日期缺省值（YYYY-MM-DD）
- * @returns {{records: Array, errors: Array<{line: number, reason: string}>, summary: {rows, records, points, errorRows}}}
- *   records[i] = { date, sampleId, system, contentParts: string[], fields: [{k, v}] }
+ * @returns {{records: Array<{date: string, sampleId: string, system: string, contentParts: string[], fields: import("./types.js").MetricField[]}>, errors: Array<{line: number, reason: string}>, summary: {rows: number, records: number, points: number, errorRows: number}}}
  */
 export function parseMetricTable(text, opts = {}) {
   const today = DATE_RE.test(opts?.today || "") ? opts.today : new Date().toISOString().slice(0, 10);
   const lines = String(text ?? "").split(/\r?\n/).filter((l) => l.trim() !== "");
+  /** @type {Array<{date: string, sampleId: string, system: string, contentParts: string[], fields: import("./types.js").MetricField[]}>} */
   const records = [];
+  /** @type {Array<{line: number, reason: string}>} */
   const errors = [];
   if (lines.length < 2) {
     return { records, errors: [{ line: 0, reason: "需要表头行 + 至少一行数据" }], summary: { rows: 0, records: 0, points: 0, errorRows: 1 } };

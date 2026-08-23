@@ -4,22 +4,7 @@
  * 表头单位拼接、键名带温度、同测量合并、错误行、科学计数法、未知列。
  */
 import { parseMetricTable } from "../src-server/server/import-parser.js";
-
-let pass = 0;
-let fail = 0;
-function assert(cond, msg) {
-  if (cond) {
-    pass += 1;
-  } else {
-    fail += 1;
-    console.error("  ✗ FAIL:", msg);
-  }
-}
-assert.equal = (actual, expected, msg) =>
-  assert(actual === expected, `${msg}（期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}）`);
-assert.ok = (cond, msg) => assert(cond, msg);
-assert.deepEqual = (actual, expected, msg) =>
-  assert(JSON.stringify(actual) === JSON.stringify(expected), `${msg}（期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}）`);
+import { assert, assertFinish, assertSummary } from './helpers/assert.mjs';
 
 console.log("== 批量导入解析测试 ==");
 
@@ -199,5 +184,19 @@ console.log("== 批量导入解析测试 ==");
   assert.equal(r.records.length, 2, "不同样品分记录");
 }
 
-console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
-process.exit(fail === 0 ? 0 : 1);
+// 5. O-11 引号感知：字段内嵌逗号/转义引号不破坏切分（splitRow 不按引号内逗号切分）
+{
+  const text = [
+    "样品\t内容\tZT",
+    '"S-1"\t"做了A,做了B"\t0.9',
+    '"S-2"\t"说了 ""hi"" 然后收尾"\t0.7',
+  ].join("\n");
+  const r = parseMetricTable(text, { today: "2026-08-14" });
+  assert.equal(r.errors.length, 0, "包含引号/内嵌逗号/转义引号的行不应报错");
+  assert.equal(r.records[0].sampleId, "S-1", "引号包裹的 sampleId 应去除引号");
+  assert.equal(r.records[0].fields.length, 1, "ZT 列应作为指标抽取（内嵌逗号不破坏切分）");
+  assert.equal(r.records[1].sampleId, "S-2", "第二条引号去引号");
+}
+
+console.log(`\n结果: ${assertSummary()} `);
+assertFinish();

@@ -12,5 +12,4 @@
 只能输出一个 JSON 对象，不要任何额外文字。字段固定，缺的给 null：
 {"content":"","sampleId":null,"system":null,"data":null,"taskId":null,"durationHours":null,"startDate":null}
 
-下面是要整理的消息：
-{{MESSAGE}}
+（待整理的消息由调用方以 user 角色提供，不在本模板内；本模板仅作为 system 提示词。）

@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { dateToMs, fmtDateShort, fmt } from '../lib/dates';
 
 /**
  * 数据点（后端 /metrics/series 契约，见 src-server/server/metrics.js）：
@@ -58,22 +59,27 @@ const PLOT_H = 260 - PAD.top - PAD.bottom;
 const L_HIGH = 0.76;
 const L_LOW = 0.34;
 
-function dateToMs(date: string): number {
-  const d = new Date(date);
-  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
-}
-
-function fmtTick(v: number): string {
+export function fmtTick(v: number): string {
   if (v === 0) return '0';
   const abs = Math.abs(v);
   const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
-  return v.toFixed(digits).replace(/\.?0+$/, '');
+  // 用 Number 转回自动去掉多余的尾零，避免把整数部分尾零（如 100 → 1）误削
+  return String(Number(v.toFixed(digits)));
 }
 
-function fmtDateShort(date: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date || '');
-  if (!m) return date || '';
-  return `${m[2]}/${m[3]}`;
+/** 规整刻度：把 [min,max] 切成「好看」的整数/小数步长（1/2/5×10^k），让 Y 轴刻度美观 */
+export function niceTicks(min: number, max: number, count = 5): number[] {
+  const span = max - min;
+  if (!Number.isFinite(span) || span <= 0) return [min, max];
+  const raw = span / count;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / pow;
+  const step = (norm >= 7.5 ? 10 : norm >= 3.5 ? 5 : norm >= 1.5 ? 2 : 1) * pow;
+  const start = Math.ceil(min / step) * step;
+  const out: number[] = [];
+  for (let v = start; v <= max + step * 1e-6; v += step) out.push(v);
+  if (out.length < 2) return [min, max];
+  return out;
 }
 
 function fmtTemp(t: number, u?: string | null): string {
@@ -165,7 +171,8 @@ export function MetricsChart({ metricLabel, unit, series, baseline, target, temp
     yMax += pad;
     if (yMin < 0 && Math.min(...all.map((p) => p.value)) >= 0) yMin = 0; // 非负指标不画负轴
 
-    const yTicks = [0, 1, 2, 3, 4].map((i) => yMin + ((yMax - yMin) * i) / 4);
+    const yTicks = niceTicks(yMin, yMax, 5).filter((t) => t >= yMin - 1e-9 && t <= yMax + 1e-9);
+    if (yTicks.length < 2) yTicks.push(yMin, yMax);
     const yOf = (v: number) => PAD.top + (1 - (v - yMin) / (yMax - yMin || 1)) * PLOT_H;
 
     const ms = all.map((p) => dateToMs(p.date)).filter((x) => x > 0);
@@ -187,7 +194,7 @@ export function MetricsChart({ metricLabel, unit, series, baseline, target, temp
     for (let i = 0; i < N; i++) {
       const frac = N === 1 ? 0 : i / (N - 1);
       const t = xMin + frac * (xMax - xMin);
-      xTicks.push({ x: PAD.left + frac * PLOT_W, label: fmtDateShort(new Date(t).toISOString().slice(0, 10)) });
+      xTicks.push({ x: PAD.left + frac * PLOT_W, label: fmtDateShort(fmt(new Date(t))) });
     }
 
     return { scales: { yOf, xOf }, yTicks, xTicks, allPoints: all, tempsPresent, hollowPresent };
@@ -199,6 +206,9 @@ export function MetricsChart({ metricLabel, unit, series, baseline, target, temp
     return <div className="mrc-chart-empty">暂无该指标的数据点</div>;
   }
 
+  // 点数少时给每个数据点标注数值，避免单点/稀疏图显得空旷
+  const showPointLabels = allPoints.length <= 8;
+
   return (
     <>
       <svg
@@ -208,22 +218,31 @@ export function MetricsChart({ metricLabel, unit, series, baseline, target, temp
         role="img"
         aria-label={`${metricLabel} 时间线`}
       >
-        {/* 网格 + Y 刻度 */}
-        {yTicks.map((v, i) => (
-          <g key={i}>
-            <line x1={PAD.left} y1={yOf(v)} x2={W - PAD.right} y2={yOf(v)} stroke="var(--mrc-border, #ddd)" opacity={i === 0 ? 0.9 : 0.4} />
-            <text x={PAD.left - 6} y={yOf(v) + 3} fontSize={10} textAnchor="end" fill="var(--mrc-text-dim, #888)">
-              {fmtTick(v)}
-            </text>
-          </g>
-        ))}
+        {/* 网格 + Y 刻度（虚线柔和 + 规整刻度） */}
+        {yTicks.map((v, i) => {
+          const isBottom = Math.abs(yOf(v) - (PAD.top + PLOT_H)) < 1; // y=底部边界：避免与 X 轴实线重叠
+          return (
+            <g key={i}>
+              {!isBottom && (
+                <line x1={PAD.left} y1={yOf(v)} x2={W - PAD.right} y2={yOf(v)} stroke="var(--mrc-border, #ddd)" strokeDasharray="3 5" opacity={0.6} />
+              )}
+              <text x={PAD.left - 6} y={yOf(v) + 3} fontSize={10} textAnchor="end" fill="var(--mrc-text-dim, #888)">
+                {fmtTick(v)}
+              </text>
+            </g>
+          );
+        })}
+        {/* 坐标轴线（左 Y / 底 X，淡色） */}
+        <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + PLOT_H} stroke="var(--mrc-border, #ddd)" strokeWidth={1} opacity={0.7} />
+        <line x1={PAD.left} y1={PAD.top + PLOT_H} x2={W - PAD.right} y2={PAD.top + PLOT_H} stroke="var(--mrc-border, #ddd)" strokeWidth={1} opacity={0.7} />
         {/* X 刻度 */}
         {xTicks.map((t, i) => (
           <text key={i} x={t.x} y={260 - PAD.bottom + 16} fontSize={10} textAnchor="middle" fill="var(--mrc-text-dim, #888)">
             {t.label}
           </text>
         ))}
-        <text x={PAD.left - 6} y={PAD.top - 4} fontSize={10} textAnchor="end" fill="var(--mrc-text-dim, #888)">
+        {/* 单位/指标标签：放左上角从左读，避免单位过长向左超出边界被裁切 */}
+        <text x={4} y={PAD.top - 6} fontSize={10} textAnchor="start" fill="var(--mrc-text-dim, #888)">
           {unit || metricLabel}
         </text>
 
@@ -296,17 +315,23 @@ export function MetricsChart({ metricLabel, unit, series, baseline, target, temp
               {pts.map((p, j) => {
                 const c = colorOf(p);
                 return (
-                  <circle
-                    key={j}
-                    cx={xOf(p.date)}
-                    cy={yOf(p.value)}
-                    r={p.unit == null ? 4 : 3.5}
-                    fill={p.unit == null ? 'none' : c}
-                    stroke={c}
-                    strokeWidth={p.unit == null ? 2 : 1}
-                  >
-                    <title>{tooltipText(s.system, p, metricLabel, unit, entryContent)}</title>
-                  </circle>
+                  <g key={j}>
+                    <circle
+                      cx={xOf(p.date)}
+                      cy={yOf(p.value)}
+                      r={p.unit == null ? 4 : 3.5}
+                      fill={p.unit == null ? 'none' : c}
+                      stroke={c}
+                      strokeWidth={p.unit == null ? 2 : 1}
+                    >
+                      <title>{tooltipText(s.system, p, metricLabel, unit, entryContent)}</title>
+                    </circle>
+                    {showPointLabels && (
+                      <text x={xOf(p.date)} y={yOf(p.value) - 9} fontSize={9.5} textAnchor="middle" fill={c} style={{ fontWeight: 600 }} pointerEvents="none">
+                        {fmtTick(p.value)}
+                      </text>
+                    )}
+                  </g>
                 );
               })}
             </g>

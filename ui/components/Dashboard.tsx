@@ -1,17 +1,15 @@
 import { useMemo } from 'react';
 import { api } from '../api';
+import { todayStr } from '../lib/dates';
 
 type Props = {
   state: any;
   onStateChange: () => Promise<void>;
   showToast: (msg: string, opts?: { error?: boolean }) => void;
   onGoSchedule: () => void;
+  /** widget 窄条模式：只保留最有信息量的一张小卡片，去掉与页面重复的冗余卡 */
+  compact?: boolean;
 };
-
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 /** 本周起始 ISO（周一） */
 function weekStartIso() {
@@ -26,7 +24,7 @@ function weekStartIso() {
  * 今日概览：打开面板第一眼看到的东西。
  * 今日进行中任务（可勾选）、临期任务、今日日程、本周统计（基于 state 直接计算）。
  */
-export function Dashboard({ state, onStateChange, showToast, onGoSchedule }: Props) {
+export function Dashboard({ state, onStateChange, showToast, onGoSchedule, compact = false }: Props) {
   const tasks: any[] = state?.gantt?.tasks || [];
   const events: any[] = state?.calendar?.events || [];
   const today = todayStr();
@@ -68,6 +66,26 @@ export function Dashboard({ state, onStateChange, showToast, onGoSchedule }: Pro
       await onStateChange();
     }
   };
+
+  // widget 精简视图：去掉与页面重复的三张卡，只留「本周统计」+ 一行今日任务状态
+  if (compact) {
+    return (
+      <div className="mrc-dashboard mrc-dash-compact">
+        <div className="mrc-dash-card mrc-dash-week">
+          <div className="mrc-dash-title">🗓️ 本周</div>
+          <div className="mrc-dash-week-grid">
+            <div><b>{week.workCount ?? 0}</b><span>实验记录</span></div>
+            <div><b>{week.litCount ?? 0}</b><span>文献新增</span></div>
+            <div><b>{week.avgProgress ?? 0}%</b><span>平均进度</span></div>
+          </div>
+          <div className="mrc-dash-todayline">
+            {todayTasks.length > 0 ? `今日 ${todayTasks.length} 项进行中` : todayEvents.length > 0 ? `今日 ${todayEvents.length} 条日程` : '今日暂无任务与日程'}
+            {dueSoon.length > 0 && <span className="mrc-due-badge">{dueSoon.length} 项临期</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mrc-dashboard">

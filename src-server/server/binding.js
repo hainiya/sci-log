@@ -5,6 +5,10 @@
  */
 import { createStore } from "./store.js";
 
+/**
+ * @param {import("./types.js").ToolCtx} ctx
+ * @returns {any}
+ */
 export function ensureAutoBinding(ctx) {
   if (!ctx?.dataDir) return null;
   const store = createStore(ctx.dataDir);

@@ -10,6 +10,19 @@
  *
  * 用途：syncZotero / scanAllSources 检测到新收录条目时调用。
  */
+import { newId } from "./ids.js";
+
+/**
+ * @typedef {import("./types.js").StoreApi} StoreApi
+ * @typedef {import("./types.js").LiteratureEntry} LiteratureEntry
+ */
+
+/**
+ * @param {StoreApi} store
+ * @param {LiteratureEntry[]} newEntries
+ * @param {string} scanId
+ * @returns {{ ok: boolean, appended?: number, entry?: import("./types.js").WorklogEntry }}
+ */
 export function appendLiteratureLog(store, newEntries, scanId) {
   if (!Array.isArray(newEntries) || newEntries.length === 0) {
     return { ok: true, appended: 0 };
@@ -26,8 +39,9 @@ export function appendLiteratureLog(store, newEntries, scanId) {
     lines.push(`- [${e.year || "?"}] ${e.title || "未命名"}${authors}`);
   }
 
+  /** @type {import("./types.js").WorklogEntry} */
   const entry = {
-    id: `work_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+    id: newId("work"),
     kind: "literature-log",
     scanId,
     date: store.now().slice(0, 10),

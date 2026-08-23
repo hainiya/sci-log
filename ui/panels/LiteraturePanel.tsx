@@ -219,27 +219,29 @@ export function LiteraturePanel({ state, onStateChange, showToast }: Props) {
         <div className="mrc-section-head">
           <span className="mrc-section-title">📚 文献库</span>
           <span className="mrc-count">{entries.length}</span>
-          <span className="mrc-zotero-status" title={zotero?.ok ? `Zotero 已连接：${zotero.total} 条` : `Zotero 未连接${zotero?.error ? `：${zotero.error}` : ''}`}>
+          <span className={`mrc-zotero-status ${zotero?.ok ? 'ok' : 'off'}`} title={zotero?.ok ? `Zotero 已连接：${zotero.total} 条` : `Zotero 未连接${zotero?.error ? `：${zotero.error}` : ''}`}>
             {zotero?.ok ? '● Zotero 在线' : '○ Zotero 离线'}
           </span>
-          <button className="mrc-btn small" onClick={scanNow} disabled={scanning} title="全量同步：Zotero 镜像">
-            {scanning ? '⏳ 扫描中…' : '🔄 扫描'}
-          </button>
-          <button className="mrc-btn small" onClick={enhancePdfs} disabled={enhanceBusy} title="生成/翻译摘要 + 提取关键词">
-            {enhanceBusy ? '补全中…' : '✨ AI 摘要'}
-          </button>
-          {entries.some((e) => e.zoteroGone) &&
-            (confirmPurge ? (
-              <span className="mrc-inline-confirm">
-                <span className="mrc-confirm-tip">删除全部失效镜像？（不可恢复）</span>
-                <button className="mrc-btn small danger" onClick={purgeGone}>确认删除</button>
-                <button className="mrc-btn small" onClick={() => setConfirmPurge(false)}>取消</button>
-              </span>
-            ) : (
-              <button className="mrc-btn small danger" onClick={() => setConfirmPurge(true)} title="删除 Zotero 中已删除文献的失效镜像">
-                🗑 清除失效
-              </button>
-            ))}
+          <span className="mrc-head-actions">
+            <button className="mrc-btn small" onClick={scanNow} disabled={scanning} title="全量同步：Zotero 镜像">
+              {scanning ? '⏳ 扫描中…' : '🔄 扫描'}
+            </button>
+            <button className="mrc-btn small" onClick={enhancePdfs} disabled={enhanceBusy} title="生成/翻译摘要 + 提取关键词">
+              {enhanceBusy ? '补全中…' : '✨ AI 摘要'}
+            </button>
+            {entries.some((e) => e.zoteroGone) &&
+              (confirmPurge ? (
+                <span className="mrc-inline-confirm">
+                  <span className="mrc-confirm-tip">删除全部失效镜像？（不可恢复）</span>
+                  <button className="mrc-btn small danger" onClick={purgeGone}>确认删除</button>
+                  <button className="mrc-btn small" onClick={() => setConfirmPurge(false)}>取消</button>
+                </span>
+              ) : (
+                <button className="mrc-btn small danger" onClick={() => setConfirmPurge(true)} title="删除 Zotero 中已删除文献的失效镜像">
+                  🗑 清除失效
+                </button>
+              ))}
+          </span>
         </div>
 
         <div className="mrc-filter-row mrc-coll-filter">

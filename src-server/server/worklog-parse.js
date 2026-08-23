@@ -1,3 +1,5 @@
+import { extractFirstJson } from "./json-util.js";
+
 /**
  * parseDraft —— LLM 输出字符串 → 实验记录草稿对象的纯函数模块。
  *
@@ -8,14 +10,21 @@
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** 清洗可选字符串字段：非字符串或 trim 后为空 → null；否则截断到 max 字符 */
+/** 清洗可选字符串字段：非字符串或 trim 后为空 → null；否则截断到 max 字符
+ * @param {unknown} v
+ * @param {number} max
+ * @returns {string|null}
+ */
 function cleanStr(v, max) {
   if (typeof v !== "string") return null;
   const s = v.trim().slice(0, max);
   return s || null;
 }
 
-/** 时长（小时）：正数保留 1 位小数；缺失/非数值/非正 → null（与 llm.js triageWorkEntry 同规则） */
+/** 时长（小时）：正数保留 1 位小数；缺失/非数值/非正 → null（与 llm.js triageWorkEntry 同规则）
+ * @param {unknown} v
+ * @returns {number|null}
+ */
 function cleanDurationHours(v) {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
@@ -40,11 +49,11 @@ function cleanDurationHours(v) {
 export function parseDraft(rawText) {
   const raw = String(rawText ?? "").trim();
   if (!raw) return null;
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
+  const json = extractFirstJson(raw);
+  if (!json) return null;
   let parsed;
   try {
-    parsed = JSON.parse(jsonMatch[0]);
+    parsed = JSON.parse(json);
   } catch {
     return null;
   }

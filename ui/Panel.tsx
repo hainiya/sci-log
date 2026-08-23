@@ -98,7 +98,8 @@ function Panel() {
   const goTab = (t: MainTab) => setTab(t);
 
   return (
-    <HanaThemeProvider mode="inherit" className="mrc-panel">
+    <div className="mrc-panel">
+      <HanaThemeProvider mode="inherit">
       <div className="mrc-app" data-surface={surface}>
         <header className="mrc-header">
           <div className="mrc-header-title">
@@ -113,6 +114,9 @@ function Panel() {
             </span>
           </div>
           <div className="mrc-header-actions">
+            <button className="mrc-btn" onClick={loadState} disabled={loading} title="手动刷新数据">
+              {loading ? '…' : '🔄'}
+            </button>
             <button className="mrc-btn" onClick={() => setSettingsOpen(true)}>⚙️ 设置</button>
           </div>
         </header>
@@ -122,13 +126,14 @@ function Panel() {
         {loading ? (
           <div className="mrc-loading">加载中…</div>
         ) : surface === 'widget' ? (
-          /* widget 窄条：只放最该随手看到的东西 */
+          /* widget 窄条：只放最该随手看到的东西（compact 精简，不再重复三大卡） */
           <main className="mrc-widget">
             <Dashboard
               state={state}
               onStateChange={loadState}
               showToast={showToast}
               onGoSchedule={() => {}}
+              compact
             />
             <div className="mrc-hint">完整功能请打开插件页面（日程 / 实验记录 / 指标趋势 / 文献库）。</div>
           </main>
@@ -182,7 +187,8 @@ function Panel() {
           />
         )}
       </div>
-    </HanaThemeProvider>
+      </HanaThemeProvider>
+    </div>
   );
 }
 

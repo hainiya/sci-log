@@ -7,6 +7,8 @@
  * - version 不匹配 → 拒绝写入，返回最新数据
  * - literature.json 追加式写入（append），删除/修改走乐观锁
  * - 保留最近 MAX_SNAPSHOTS 个版本快照，可一键回退
+ *
+ * @typedef {import("./types.js").StoreApi} StoreApi
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -14,6 +16,7 @@ import path from "node:path";
 export const MAX_SNAPSHOTS = 20;
 export const LITERATURE_COMPACT_THRESHOLD = 500;
 
+/** @type {Record<string, () => any>} */
 const DEFAULT_DOC = {
   gantt: () => ({ version: 0, tasks: [], updatedAt: null }),
   calendar: () => ({ version: 0, events: [], updatedAt: null }),
@@ -26,6 +29,7 @@ const DEFAULT_DOC = {
   collections: () => ({ version: 0, collections: [], updatedAt: null }),
 };
 
+/** @type {Record<string, string>} */
 export const UPDATES_KEYS = {
   gantt: "gantt",
   calendar: "calendar",
@@ -33,14 +37,26 @@ export const UPDATES_KEYS = {
   literature: "literature",
 };
 
+/**
+ * @param {string} dataDir
+ * @param {string} name
+ */
 function filePathFor(dataDir, name) {
   return path.join(dataDir, `${name}.json`);
 }
 
+/**
+ * @param {string} dataDir
+ * @param {string} name
+ */
 function snapshotDirFor(dataDir, name) {
   return path.join(dataDir, "snapshots", name);
 }
 
+/**
+ * @param {string} filePath
+ * @param {string} content
+ */
 function atomicWrite(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.tmp`;
@@ -48,11 +64,16 @@ function atomicWrite(filePath, content) {
   fs.renameSync(tmp, filePath);
 }
 
+/**
+ * @param {string} filePath
+ * @param {() => any} fallback
+ * @returns {any}
+ */
 function readJson(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch (err) {
-    if (err.code !== "ENOENT") {
+    if (/** @type {NodeJS.ErrnoException} */ (err).code !== "ENOENT") {
       // 损坏文件：备份后重建，保证面板可用
       try {
         fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
@@ -66,9 +87,46 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+/**
+ * @param {string} dataDir
+ * @returns {StoreApi}
+ */
 export function createStore(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
 
+  /**
+   * 读取（含结构兜底与 version 归一化）。
+   * 已知文档名返回精确类型；未知名回落 any。
+   * @overload
+   * @param {"gantt"} name
+   * @returns {import("./types.js").GanttDoc}
+   * @overload
+   * @param {"calendar"} name
+   * @returns {import("./types.js").CalendarDoc}
+   * @overload
+   * @param {"worklog"} name
+   * @returns {import("./types.js").WorklogDoc}
+   * @overload
+   * @param {"literature"} name
+   * @returns {import("./types.js").LiteratureDoc}
+   * @overload
+   * @param {"collections"} name
+   * @returns {import("./types.js").CollectionsDoc}
+   * @overload
+   * @param {"binding"} name
+   * @returns {import("./types.js").BindingDoc}
+   * @overload
+   * @param {"updates"} name
+   * @returns {import("./types.js").UpdatesDoc}
+   * @overload
+   * @param {"settings"} name
+   * @returns {import("./types.js").SettingsDoc}
+   * @overload
+   * @param {string} name
+   * @returns {any}
+   * @param {string} name
+   * @returns {any}
+   */
   function read(name) {
     const doc = readJson(filePathFor(dataDir, name), DEFAULT_DOC[name]);
     // 结构兜底：新字段缺失时补默认
@@ -86,11 +144,13 @@ export function createStore(dataDir) {
     return merged;
   }
 
+  /** @param {string} name @param {any} data @returns {any} */
   function write(name, data) {
     atomicWrite(filePathFor(dataDir, name), `${JSON.stringify(data, null, 2)}\n`);
     return data;
   }
 
+  /** @param {string} name @param {number} version */
   function snapshot(name, version) {
     try {
       const doc = read(name);
@@ -102,9 +162,11 @@ export function createStore(dataDir) {
     }
   }
 
+  /** @param {string} name */
   function pruneSnapshots(name) {
     const dir = snapshotDirFor(dataDir, name);
     if (!fs.existsSync(dir)) return;
+    /** @type {string[]} */
     let files;
     try {
       files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
@@ -122,7 +184,10 @@ export function createStore(dataDir) {
 
   /**
    * 乐观锁更新：version 匹配才允许写入
-   * @returns {{ ok: true, data } | { ok: false, error: "version_conflict", data: 最新 }}
+   * @param {string} name
+   * @param {number|undefined} expectedVersion
+   * @param {(cur: any) => Record<string, any>} mutator
+   * @returns {{ ok: true, data: any } | { ok: false, error: "version_conflict", data: any }}
    */
   function update(name, expectedVersion, mutator) {
     const doc = read(name);
@@ -139,12 +204,17 @@ export function createStore(dataDir) {
   /**
    * 追加式写入（literature 专用）：新条目 append 到 entries 尾部
    * 去重：对已有 entries 按 dedupeKeys 提取指纹，跳过重复项
+   * @param {string} name
+   * @param {any[]} items
+   * @param {string[]} [dedupeKeys]
+   * @returns {{ ok: true, data: any, appended: number }}
    */
   function append(name, items, dedupeKeys = ["doi", "title"]) {
     if (!Array.isArray(items) || items.length === 0) {
       return { ok: true, data: read(name), appended: 0 };
     }
     const doc = read(name);
+    /** @param {any} entry @returns {string[]} */
     const fingerprintsOf = (entry) => {
       const parts = [];
       for (const key of dedupeKeys) {
@@ -185,7 +255,7 @@ export function createStore(dataDir) {
     return { ok: true, data: next, appended: fresh.length };
   }
 
-  /** 压实：去重 + 重建索引 */
+  /** 压实：去重 + 重建索引 @param {string} name */
   function compact(name) {
     const doc = read(name);
     const seen = new Map();
@@ -212,15 +282,22 @@ export function createStore(dataDir) {
     snapshot(name, next.version);
   }
 
-  /** 回退到指定快照版本（或上一版本） */
+  /**
+   * 回退到指定快照版本（或上一版本）
+   * @param {string} name
+   * @param {number} [toVersion]
+   * @returns {{ ok: boolean, error?: string, data?: any }}
+   */
   function rollback(name, toVersion) {
     const dir = snapshotDirFor(dataDir, name);
     const target = toVersion !== undefined ? `${toVersion}.json` : null;
+    /** @type {string|null} */
     let snapshotFile = null;
     if (target) {
       const p = path.join(dir, target);
       if (fs.existsSync(p)) snapshotFile = p;
     } else {
+      /** @type {string[]} */
       let files = [];
       try {
         files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
@@ -240,6 +317,7 @@ export function createStore(dataDir) {
     return { ok: true, data: next };
   }
 
+  /** @param {string} name @returns {number[]} */
   function listSnapshots(name) {
     const dir = snapshotDirFor(dataDir, name);
     if (!fs.existsSync(dir)) return [];
@@ -254,7 +332,7 @@ export function createStore(dataDir) {
     }
   }
 
-  /** 推进水位线 */
+  /** 推进水位线 @param {string} name @returns {any} */
   function bump(name) {
     const updates = read("updates");
     const key = UPDATES_KEYS[name] || name;
@@ -263,6 +341,7 @@ export function createStore(dataDir) {
     return next;
   }
 
+  /** @param {string} key @param {number} value @returns {any} */
   function setUpdate(key, value) {
     const updates = read("updates");
     const next = { ...updates, [key]: value };
@@ -276,10 +355,15 @@ export function createStore(dataDir) {
    * keyField 为空的条目（在线/工作区）不受影响；
    * extraKeep 列表（如 E4 zoteroGone 失效镜像）附加保留。
    * 总是 bump 版本一次（让巡检触发条件覆盖 Zotero 更新）。
-   * @returns {{ ok: true, data, replaced: number }}
+   * @param {string} name
+   * @param {string} keyField
+   * @param {any[]} items
+   * @param {any[]} [extraKeep]
+   * @returns {{ ok: true, data: any, replaced: number }}
    */
   function upsertByKey(name, keyField, items, extraKeep = []) {
     const doc = read(name);
+    /** @type {Array<Record<string, any>>} */
     const existing = doc.entries || [];
     const kept = [...existing.filter((e) => !e[keyField]), ...extraKeep];
     const replaced = items.filter((e) => e[keyField]).length;

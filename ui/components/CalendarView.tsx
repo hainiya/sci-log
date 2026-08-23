@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { fmt } from '../lib/dates';
+import { newId } from '../lib/ids';
 
 export type CalendarEvent = {
   id: string;
@@ -14,11 +16,13 @@ type Props = {
   events: CalendarEvent[];
   tasks: { id: string; name: string }[];
   onSave: (events: CalendarEvent[]) => Promise<void>;
+  /** 有实验记录的日期（YYYY-MM-DD），日历格子叠加绿色圆点标记，便于对照实验与日程 */
+  worklogDates?: string[];
 };
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
-export function CalendarView({ events, tasks, onSave }: Props) {
+export function CalendarView({ events, tasks, onSave, worklogDates = [] }: Props) {
   const today = useMemo(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -60,6 +64,8 @@ export function CalendarView({ events, tasks, onSave }: Props) {
     return map;
   }, [events]);
 
+  const worklogSet = useMemo(() => new Set(worklogDates.filter(Boolean)), [worklogDates]);
+
   const prevMonth = () => setCursor((c) => (c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 }));
   const nextMonth = () => setCursor((c) => (c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 }));
 
@@ -70,7 +76,7 @@ export function CalendarView({ events, tasks, onSave }: Props) {
     await onSave([
       ...events,
       {
-        id: `evt_${Date.now().toString(36)}`,
+        id: newId("evt"),
         title,
         date,
         startTime: form.time || null,
@@ -101,9 +107,13 @@ export function CalendarView({ events, tasks, onSave }: Props) {
         {cells.map((cell) => {
           const dayEvents = byDate[cell.date] || [];
           const isToday = cell.date === today;
+          const hasWork = worklogSet.has(cell.date);
           return (
             <div key={cell.date} className={`mrc-cal-cell ${cell.inMonth ? '' : 'muted'} ${isToday ? 'today' : ''} ${adding === cell.date ? 'adding' : ''}`} onClick={() => setAdding(cell.date)}>
-              <div className="mrc-cal-daynum">{cell.day}</div>
+              <div className="mrc-cal-daynum">
+                {cell.day}
+                {hasWork && <span className="mrc-cal-work-dot" title="当天有实验记录" />}
+              </div>
               {dayEvents.slice(0, 2).map((ev) => (
                 <div key={ev.id} className={`mrc-cal-event type-${ev.type || 'default'}`} title={ev.title}>
                   {ev.startTime ? `${ev.startTime} ` : ''}{ev.title}
@@ -136,6 +146,4 @@ export function CalendarView({ events, tasks, onSave }: Props) {
   );
 }
 
-function fmt(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+

@@ -31,6 +31,11 @@ export const sessionPermission = {
   }),
 };
 
+/**
+ * @param {Record<string, any>} input
+ * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @returns {Promise<any>}
+ */
 export async function execute(input = {}, toolCtx) {
   const store = createStore(toolCtx.dataDir);
   const worklog = store.read("worklog");
