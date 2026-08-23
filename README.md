@@ -1,4 +1,4 @@
-# 科研工作 —— 实验记录中心 / Materials Research Copilot
+# 科研日志 sci-log —— 材料科研实验记录中心 / Materials Research Copilot
 
 面向材料专业科研的 **AI 科研辅助插件**：以**实验记录为数据主线**，提供甘特图/日历可视化、指标趋势、Zotero 文献收纳，并让 AI 直接读写这些数据。
 
