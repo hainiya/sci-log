@@ -8,7 +8,7 @@
  * @param {any} raw
  * @returns {string|null}
  */
-export function extractFirstJson(raw) {
+export function extractFirstJson(raw: any): string|null {
   const s = String(raw || '');
   const start = s.indexOf('{');
   if (start === -1) return null;

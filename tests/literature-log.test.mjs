@@ -4,8 +4,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendLiteratureLog } from "../src-server/server/literature-log.js";
-import { createStore } from "../src-server/server/store.js";
+import { appendLiteratureLog } from "../src-server/server/literature-log.ts";
+import { createStore } from "../src-server/server/store.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

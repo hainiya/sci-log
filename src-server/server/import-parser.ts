@@ -13,7 +13,7 @@
  *   （T(°C) → °C 归一，否则按 K）统一归一为整数 K，与 metrics.js 提取层一致。
  * - 错误行：日期格式错 / 指标值非数字 → errors 带物理行号，跳过不阻断其他行。
  */
-import { METRIC_DEFS } from "./metrics.js";
+import { METRIC_DEFS } from "./metrics.ts";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -29,7 +29,7 @@ const COL = {
  * @param {unknown} raw
  * @returns {{ base: string, unitHint: string }}
  */
-function headerInfo(raw) {
+function headerInfo(raw: unknown): { base: string, unitHint: string } {
   const h = String(raw ?? "").trim();
   const m = h.match(/^([^(（]+)[(（]([^)）]+)[)）]$/);
   if (m) return { base: m[1].trim(), unitHint: m[2].trim() };
@@ -37,7 +37,7 @@ function headerInfo(raw) {
 }
 
 /** @param {unknown} v @returns {boolean} */
-function isBareNumber(v) {
+function isBareNumber(v: unknown): boolean {
   return /^[-+]?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(String(v));
 }
 
@@ -46,7 +46,7 @@ function isBareNumber(v) {
  * @param {string} headerHint
  * @returns {number|null}
  */
-function parseTempValue(cell, headerHint) {
+function parseTempValue(cell: unknown, headerHint: string): number|null {
   const s = String(cell ?? "").trim();
   if (!s) return null;
   const k = s.match(/^(-?\d+(?:\.\d+)?)\s*°?\s*K$/i);
@@ -62,7 +62,7 @@ function parseTempValue(cell, headerHint) {
 }
 
 /** 剥离单元格首尾引号（CSV "..." / 中文全角引号） @param {unknown} s @returns {string} */
-function stripQuotes(s) {
+function stripQuotes(s: unknown): string {
   let v = String(s ?? "").trim();
   if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("“") && v.endsWith("”")))) {
     v = v.slice(1, -1);
@@ -74,7 +74,7 @@ function stripQuotes(s) {
  * @param {string} headerLine
  * @returns {string}
  */
-function detectDelimiter(headerLine) {
+function detectDelimiter(headerLine: string): string {
   if (headerLine.includes("\t")) return "\t";
   if (headerLine.includes(",")) return ",";
   if (headerLine.includes("，")) return "，";
@@ -86,7 +86,7 @@ function detectDelimiter(headerLine) {
  * @param {string} delimiter
  * @returns {string[]}
  */
-function splitRow(line, delimiter) {
+function splitRow(line: unknown, delimiter: string): string[] {
   const s = String(line ?? "");
   const cells = [];
   let cur = "";
@@ -114,20 +114,20 @@ function splitRow(line, delimiter) {
     }
   }
   cells.push(cur);
-  return cells.map((c) => stripQuotes(c));
+  return cells.map((c: any) => stripQuotes(c));
 }
 
 /**
  * 解析粘贴文本。
  * @param {string} text 粘贴的表格文本（表头行 + 数据行）
  * @param {{today?: string}} [opts] 日期缺省值（YYYY-MM-DD）
- * @returns {{records: Array<{date: string, sampleId: string, system: string, contentParts: string[], fields: import("./types.js").MetricField[]}>, errors: Array<{line: number, reason: string}>, summary: {rows: number, records: number, points: number, errorRows: number}}}
+ * @returns {{records: Array<{date: string, sampleId: string, system: string, contentParts: string[], fields: import("./types.ts").MetricField[]}>, errors: Array<{line: number, reason: string}>, summary: {rows: number, records: number, points: number, errorRows: number}}}
  */
-export function parseMetricTable(text, opts = {}) {
+export function parseMetricTable(text: string, opts: {today?: string}  = {}): {records: Array<{date: string, sampleId: string, system: string, contentParts: string[], fields: import("./types.ts").MetricField[]}>, errors: Array<{line: number, reason: string}>, summary: {rows: number, records: number, points: number, errorRows: number}} {
   const today = DATE_RE.test(opts?.today || "") ? opts.today : new Date().toISOString().slice(0, 10);
-  const lines = String(text ?? "").split(/\r?\n/).filter((l) => l.trim() !== "");
-  /** @type {Array<{date: string, sampleId: string, system: string, contentParts: string[], fields: import("./types.js").MetricField[]}>} */
-  const records = [];
+  const lines = String(text ?? "").split(/\r?\n/).filter((l: any) => l.trim() !== "");
+  /** @type {Array<{date: string, sampleId: string, system: string, contentParts: string[], fields: import("./types.ts").MetricField[]}>} */
+  const records: Array<{date: string, sampleId: string, system: string, contentParts: string[], fields: import("./types.ts").MetricField[]}> = [];
   /** @type {Array<{line: number, reason: string}>} */
   const errors = [];
   if (lines.length < 2) {
@@ -148,7 +148,7 @@ export function parseMetricTable(text, opts = {}) {
     else if (COL.system.test(base)) type = "system";
     else if (COL.content.test(base)) type = "content";
     else if (COL.temp.test(base)) type = "temp";
-    else if (METRIC_DEFS.some((def) => def.keyRe.test(base))) type = "metric";
+    else if (METRIC_DEFS.some((def: any) => def.keyRe.test(base))) type = "metric";
     colType.push(type);
     colUnit.push(unitHint);
   }
@@ -160,7 +160,7 @@ export function parseMetricTable(text, opts = {}) {
   for (let i = 1; i < lines.length; i++) {
     const lineNo = i + 1; // 物理行号（表头为第 1 行）
     const cells = splitRow(lines[i], delimiter);
-    if (cells.every((c) => c === "")) continue;
+    if (cells.every((c: any) => c === "")) continue;
     rows += 1;
 
     // 日期
@@ -245,7 +245,7 @@ export function parseMetricTable(text, opts = {}) {
   }
 
   const mergedRecords = [...groups.values()];
-  const points = mergedRecords.reduce((n, r) => n + r.fields.length, 0);
+  const points = mergedRecords.reduce((n: any, r: any) => n + r.fields.length, 0);
   return {
     records: mergedRecords,
     errors,

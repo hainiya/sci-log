@@ -3,9 +3,9 @@
  * - 只有 Zotero 本地库扫描（在线检索已移除）
  * - 入库直接追加式写入（去提案确认），新收录自动日志化到 worklog（由 syncZotero 完成）
  */
-import { createStore } from "../server/store.js";
-import { scanAllSources } from "../server/sources.js";
-import { ensureAutoBinding } from "../server/binding.js";
+import { createStore } from "../server/store.ts";
+import { scanAllSources } from "../server/sources.ts";
+import { ensureAutoBinding } from "../server/binding.ts";
 
 export const name = "collect_literature";
 export const description =
@@ -32,10 +32,10 @@ export const sessionPermission = {
 
 /**
  * @param {Record<string, any>} input
- * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @param {import("../server/types.ts").ToolCtx} toolCtx
  * @returns {Promise<any>}
  */
-export async function execute(input = {}, toolCtx) {
+export async function execute(input: Record<string, any>  = {}, toolCtx: import("../server/types.ts").ToolCtx): Promise<any> {
   const store = createStore(toolCtx.dataDir);
   ensureAutoBinding(toolCtx);
 
@@ -43,7 +43,7 @@ export async function execute(input = {}, toolCtx) {
   const scan = await scanAllSources(toolCtx, store);
   warnings.push(...scan.warnings);
 
-  const entries = /** @type {any[]} */ (scan.entries).map((entry, index) => ({
+  const entries = (scan.entries as any[]).map((entry: any, index: any) => ({
     id: `lit_scan_${Date.now().toString(36)}_${index}`,
     addedAt: store.now(),
     status: "new",
@@ -65,7 +65,7 @@ export async function execute(input = {}, toolCtx) {
   const result = store.append("literature", entries);
   const titles = entries
     .slice(0, 10)
-    .map((r) => `- [${r.year || "?"}] ${r.title}（${r.sourceApi || r.source || "?"}）`)
+    .map((r: any) => `- [${r.year || "?"}] ${r.title}（${r.sourceApi || r.source || "?"}）`)
     .join("\n");
   const more = entries.length > 10 ? `\n…等共 ${entries.length} 条` : "";
 

@@ -3,13 +3,13 @@
  * 工具执行时宿主注入 toolCtx.sessionId，若 binding.json 无绑定或绑定不一致，
  * 自动写入绑定并通知 lifecycle 刷新订阅。面板手动绑定（source: "manual"）优先级更高。
  */
-import { createStore } from "./store.js";
+import { createStore } from "./store.ts";
 
 /**
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @returns {any}
  */
-export function ensureAutoBinding(ctx) {
+export function ensureAutoBinding(ctx: import("./types.ts").ToolCtx): any {
   if (!ctx?.dataDir) return null;
   const store = createStore(ctx.dataDir);
   const binding = store.read("binding");

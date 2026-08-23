@@ -4,7 +4,7 @@
  * 空匹配、空入参原样返回、空数据源空态返回。
  * 测试数据用 buildMetricsSeries 构造：两条 SnSe（ZT 823K / 300K）、一条 Bi₂Te₃（ZT 400K）。
  */
-import { buildMetricsSeries, filterSeries } from '../src-server/server/metrics.js';
+import { buildMetricsSeries, filterSeries } from '../src-server/server/metrics.ts';
 import { assert, assertFinish, assertSummary } from './helpers/assert.mjs';
 
 // 构造测试数据：两条 SnSe（ZT 823K / 300K）、一条 Bi₂Te₃（ZT 400K），日期 08-05 / 08-06
@@ -128,7 +128,7 @@ assert.equal(data.metrics.zt.systems['Bi₂Te₃'].length, 1, '前置：Bi₂Te�
       path.join(dir, 'worklog.json'),
       JSON.stringify({ version: 1, entries: [{ id: 'e1', system: 'SnSe', createdAt: '2026-08-05T02:00:00Z', fields: [{ k: 'ZT', v: '0.9 @ 823K' }] }] })
     );
-    const { execute, sessionPermission } = await import('../src-server/tools/analyze-metrics.js');
+    const { execute, sessionPermission } = await import('../src-server/tools/analyze-metrics.ts');
     const res = await execute({ metric: 'zt' }, { dataDir: dir });
     assert.ok(Array.isArray(res?.content) && res.content.length > 0, 'execute 返回 content 文本包装（宿主契约）');
     const text = res.content[0]?.text;

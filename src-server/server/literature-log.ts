@@ -10,26 +10,26 @@
  *
  * 用途：syncZotero / scanAllSources 检测到新收录条目时调用。
  */
-import { newId } from "./ids.js";
+import { newId } from "./ids.ts";
 
 /**
- * @typedef {import("./types.js").StoreApi} StoreApi
- * @typedef {import("./types.js").LiteratureEntry} LiteratureEntry
+ * @typedef {import("./types.ts").StoreApi} StoreApi
+ * @typedef {import("./types.ts").LiteratureEntry} LiteratureEntry
  */
 
 /**
  * @param {StoreApi} store
  * @param {LiteratureEntry[]} newEntries
  * @param {string} scanId
- * @returns {{ ok: boolean, appended?: number, entry?: import("./types.js").WorklogEntry }}
+ * @returns {{ ok: boolean, appended?: number, entry?: import("./types.ts").WorklogEntry }}
  */
-export function appendLiteratureLog(store, newEntries, scanId) {
+export function appendLiteratureLog(store: import("./types.ts").StoreApi, newEntries: import("./types.ts").LiteratureEntry[], scanId: string): { ok: boolean, appended?: number, entry?: import("./types.ts").WorklogEntry } {
   if (!Array.isArray(newEntries) || newEntries.length === 0) {
     return { ok: true, appended: 0 };
   }
   // 幂等：同一 scanId 已在 worklog 记录过则跳过（后台定时同步重复触发不重复写）
   const wl = store.read("worklog");
-  if (Array.isArray(wl.entries) && wl.entries.some((e) => e.kind === "literature-log" && e.scanId === scanId)) {
+  if (Array.isArray(wl.entries) && wl.entries.some((e: any) => e.kind === "literature-log" && e.scanId === scanId)) {
     return { ok: true, appended: 0 };
   }
 
@@ -39,8 +39,8 @@ export function appendLiteratureLog(store, newEntries, scanId) {
     lines.push(`- [${e.year || "?"}] ${e.title || "未命名"}${authors}`);
   }
 
-  /** @type {import("./types.js").WorklogEntry} */
-  const entry = {
+  
+  const entry: import("./types.ts").WorklogEntry = {
     id: newId("work"),
     kind: "literature-log",
     scanId,

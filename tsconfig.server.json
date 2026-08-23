@@ -1,11 +1,13 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "allowJs": true,
-    "checkJs": true,
+    "allowJs": false,
+    "checkJs": false,
     "lib": ["ES2022"],
     "types": ["node"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "noEmit": true
   },
-  "include": ["src-server/**/*.js"]
+  "include": ["src-server/**/*.ts"]
 }

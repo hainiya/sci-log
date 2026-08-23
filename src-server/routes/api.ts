@@ -8,11 +8,11 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { createStore } from "../server/store.js";
-import { triageWorklog } from "../server/triage.js";
-import { readSettings, writeSettings, scanAllSources, zoteroProbe, runEnhancementLoop, enrichCitationCounts } from "../server/sources.js";
-import { buildMetricsSeries } from "../server/metrics.js";
-import { parseMetricTable } from "../server/import-parser.js";
+import { createStore } from "../server/store.ts";
+import { triageWorklog } from "../server/triage.ts";
+import { readSettings, writeSettings, scanAllSources, zoteroProbe, runEnhancementLoop, enrichCitationCounts } from "../server/sources.ts";
+import { buildMetricsSeries } from "../server/metrics.ts";
+import { parseMetricTable } from "../server/import-parser.ts";
 import {
   WorklogImportBodySchema,
   LiteratureAppendBodySchema,
@@ -20,34 +20,34 @@ import {
   BindingBodySchema,
   AutoTriageBodySchema,
   SearchWindowBodySchema,
-} from "../server/schemas.js";
+} from "../server/schemas.ts";
 
 const WRITABLE = new Set(["worklog", "gantt", "calendar", "literature"]);
 
 /**
  * @param {any} app
- * @param {import("../server/types.js").ToolCtx} ctx
+ * @param {import("../server/types.ts").ToolCtx} ctx
  */
-export default function registerApiRoutes(app, ctx) {
+export default function registerApiRoutes(app: any, ctx: import("../server/types.ts").ToolCtx) {
   const store = createStore(ctx.dataDir);
 
-  const sessionIdOf = (/** @type {any} */ c) => {
+  const sessionIdOf = (c: any) => {
     const header = c.req.header("x-hana-plugin-surface-session");
     if (header && header.trim()) return header.trim();
     return c.req.query("sessionId") || null;
   };
 
-  const sessionPathOf = (/** @type {any} */ c) => c.req.query("sessionPath") || null;
+  const sessionPathOf = (c: any) => c.req.query("sessionPath") || null;
 
   // ── 全量状态 ──────────────────────────────────────────────
-  app.get("/state", (/** @type {any} */ c) => {
-    /** @type {Record<string, any>} */
-    const state = {};
+  app.get("/state", (c: any) => {
+    
+    const state: Record<string, any> = {};
     for (const name of ["binding", "gantt", "calendar", "literature", "worklog", "settings", "collections"]) {
       if (name === "literature") {
         // E5：fullText 不进 UI state（60k-100k × N ≈ 10MB 级传输）——按需读取
         const doc = store.read(name);
-        state[name] = { ...doc, entries: (doc.entries || []).map(({ fullText, ...rest }) => rest) };
+        state[name] = { ...doc, entries: (doc.entries || []).map(({ fullText, ...rest }: any) => rest) };
       } else {
         state[name] = store.read(name);
       }
@@ -65,49 +65,49 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── E5：全文按需读取（AI 侧 / 后续全文阅读用） ────────────
-  app.get("/literature/fulltext", (/** @type {any} */ c) => {
+  app.get("/literature/fulltext", (c: any) => {
     const id = c.req.query("id") || "";
     const lit = store.read("literature");
-    const entry = (lit.entries || []).find((e) => e.zoteroKey === id || e.id === id);
+    const entry = (lit.entries || []).find((e: any) => e.zoteroKey === id || e.id === id);
     if (!entry) return c.json({ error: "not_found" }, 404);
     return c.json({ ok: true, fullText: entry.fullText || null, fullTextParsed: entry.fullTextParsed || null, title: entry.title });
   });
 
   // ── E4：一键清除失效镜像（zoteroGone 条目，用户主动操作） ──
-  app.post("/literature/purge-gone", (/** @type {any} */ c) => {
+  app.post("/literature/purge-gone", (c: any) => {
     const lit = store.read("literature");
-    const gone = (lit.entries || []).filter((e) => e.zoteroGone);
+    const gone = (lit.entries || []).filter((e: any) => e.zoteroGone);
     if (gone.length === 0) return c.json({ ok: true, purged: 0 });
-    store.update("literature", undefined, (cur) => ({
-      entries: /** @type {any[]} */ (cur.entries || []).filter((e) => !e.zoteroGone),
+    store.update("literature", undefined, (cur: any) => ({
+      entries: (cur.entries || [] as any[]).filter((e: any) => !e.zoteroGone),
     }));
     return c.json({ ok: true, purged: gone.length });
   });
 
   // ── 增量水位线（面板轮询） ───────────────────────────────
-  app.get("/changes", (/** @type {any} */ c) => {
+  app.get("/changes", (c: any) => {
     const sinceRaw = c.req.query("since");
-    /** @type {Record<string, number>} */
-    let since = {};
+    
+    let since: Record<string, number> = {};
     if (sinceRaw) {
       try {
         since = JSON.parse(sinceRaw);
       } catch {}
     }
     const updates = store.getUpdates();
-    /** @type {Record<string, number>} */
-    const changed = {};
+    
+    const changed: Record<string, number> = {};
     for (const [key, value] of Object.entries(updates)) {
-      if ((since[key] || 0) !== value) changed[key] = value;
+      if ((since[key] || 0) !== value) changed[key] = Number(value);
     }
     return c.json({ changed, updates });
   });
 
   // ── 通用读写（乐观锁） ────────────────────────────────────
   for (const name of WRITABLE) {
-    app.get(`/${name}`, (/** @type {any} */ c) => c.json(store.read(name)));
+    app.get(`/${name}`, (c: any) => c.json(store.read(name)));
 
-    app.put(`/${name}`, async (/** @type {any} */ c) => {
+    app.put(`/${name}`, async (c: any) => {
       /** @type {Record<string, any>} */
     let body;
       try {
@@ -122,12 +122,12 @@ export default function registerApiRoutes(app, ctx) {
       // A4：Zotero 镜像条目只读（提交中镜像条目与库中不一致 → 拒绝）
       if (name === "literature" && Array.isArray(data?.entries)) {
         const current = store.read("literature");
-        const curMirror = (current.entries || []).filter((e) => e.readOnly);
-        const newMirror = /** @type {any[]} */ (data.entries).filter((e) => e.readOnly);
+        const curMirror = (current.entries || []).filter((e: any) => e.readOnly);
+        const newMirror = (data.entries as any[]).filter((e: any) => e.readOnly);
         const mirrorTouched =
           curMirror.length !== newMirror.length ||
-          curMirror.some((e) => {
-            const counterpart = newMirror.find((n) => n.zoteroKey === e.zoteroKey);
+          curMirror.some((e: any) => {
+            const counterpart = newMirror.find((n: any) => n.zoteroKey === e.zoteroKey);
             return !counterpart || JSON.stringify(counterpart) !== JSON.stringify(e);
           });
         if (mirrorTouched) {
@@ -144,7 +144,7 @@ export default function registerApiRoutes(app, ctx) {
         const settings = readSettings(ctx, store);
         const autoTriage = ctx.config?.get?.("autoTriage") ?? settings.autoTriage ?? true;
         if (autoTriage) {
-          triageWorklog(ctx, store).catch((err) => ctx?.log?.warn(`triage after write failed: ${err instanceof Error ? err.message : String(err)}`));
+          triageWorklog(ctx, store).catch((err: any) => ctx?.log?.warn(`triage after write failed: ${err instanceof Error ? err.message : String(err)}`));
         }
       }
       return c.json({ ok: true, data: result.data });
@@ -154,9 +154,9 @@ export default function registerApiRoutes(app, ctx) {
   // ── 批量导入（仪器表格粘贴 → worklog 记录）───────────────
   // dryRun=true 只解析预览；否则解析 + 直接落库（等价表单录入，手工粘贴本身是显式操作）
   // 落库后巡检照常触发（autoTriage 开关语义与 app.put /worklog 一致）
-  app.post("/worklog/import", async (/** @type {any} */ c) => {
-    /** @type {Record<string, any>} */
-    let body = {};
+  app.post("/worklog/import", async (c: any) => {
+    
+    let body: Record<string, any> = {};
     try {
       body = await c.req.json();
     } catch {
@@ -180,7 +180,7 @@ export default function registerApiRoutes(app, ctx) {
     }
     const now = store.now();
     const stamp = Date.now().toString(36);
-    const entries = parsed.records.map((r, i) => ({
+    const entries = parsed.records.map((r: any, i: any) => ({
       id: `work_${stamp}_${i}_${Math.random().toString(36).slice(2, 6)}`,
       sampleId: r.sampleId || null,
       date: r.date,
@@ -194,14 +194,14 @@ export default function registerApiRoutes(app, ctx) {
       citations: [],
       ...(r.system ? { system: r.system } : {}),
     }));
-    const result = store.update("worklog", undefined, (cur) => ({
-      entries: [...(/** @type {any[]} */ (cur.entries || [])), ...entries],
+    const result = store.update("worklog", undefined, (cur: any) => ({
+      entries: [...((cur.entries || [] as any[])), ...entries],
     }));
     if (result.ok) {
       const settings = readSettings(ctx, store);
       const autoTriage = ctx.config?.get?.("autoTriage") ?? settings.autoTriage ?? true;
       if (autoTriage) {
-        triageWorklog(ctx, store).catch((err) => ctx?.log?.warn(`triage after import failed: ${err instanceof Error ? err.message : String(err)}`));
+        triageWorklog(ctx, store).catch((err: any) => ctx?.log?.warn(`triage after import failed: ${err instanceof Error ? err.message : String(err)}`));
       }
     }
     return c.json({
@@ -214,22 +214,22 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 实验记录 AI 巡检（手动触发） ─────────────────────────
-  app.post("/worklog/triage", async (/** @type {any} */ c) => {
-    /** @type {Record<string, any>} */
-    let body = {};
+  app.post("/worklog/triage", async (c: any) => {
+    
+    let body: Record<string, any> = {};
     try {
       body = await c.req.json();
     } catch {}
     const force = Boolean(body?.force);
-    const result = /** @type {any} */ (await triageWorklog(ctx, store, { force }).catch((err) => ({
+    const result = /** @type {any} */ (await triageWorklog(ctx, store, { force }).catch((err: any) => ({
       error: "triage_failed",
       detail: err instanceof Error ? err.message : String(err),
     })));
-    return c.json({ ok: !result?.error, ...result });
+    return c.json({ ok: !(result as any)?.error, ...(result as any) });
   });
 
   // ── literature 追加式（扫描入库共用） ────────────────
-  app.post("/literature/append", async (/** @type {any} */ c) => {
+  app.post("/literature/append", async (c: any) => {
     /** @type {Record<string, any>} */
     let body;
     try {
@@ -248,7 +248,7 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── E5：手动触发 OpenAlex 引用数补全（多轮铺完） ──────────
-  app.post("/literature/enrich-cites", async (/** @type {any} */ c) => {
+  app.post("/literature/enrich-cites", async (c: any) => {
     let processed = 0;
     for (let round = 0; round < 8; round++) {
       const r = await enrichCitationCounts(ctx, store, 5);
@@ -260,10 +260,10 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 文献扫描（手动） ──────────────────────────────────────
-  app.post("/scan", async (/** @type {any} */ c) => {
+  app.post("/scan", async (c: any) => {
     try {
       const { entries, warnings, sourceStats } = await scanAllSources(ctx, store);
-      const enriched = /** @type {any[]} */ (entries).map((e, index) => ({
+      const enriched = (entries as any[]).map((e: any, index: any) => ({
         id: `lit_scan_${Date.now().toString(36)}_${index}`,
         addedAt: store.now(),
         status: "new",
@@ -285,26 +285,26 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 文献移除（用户操作：待整理条目单条/清空；Zotero 镜像只读拒绝） ──
-  app.delete("/literature", async (/** @type {any} */ c) => {
-    /** @type {Record<string, any>} */
-    let body = {};
+  app.delete("/literature", async (c: any) => {
+    
+    let body: Record<string, any> = {};
     try { body = await c.req.json(); } catch {}
     const doc = store.read("literature");
     const entries = doc.entries || [];
     let targets;
     if (body?.all === true) {
-      targets = entries.filter((e) => e.source !== "zotero" && typeof e.id === "string").map((e) => e.id);
+      targets = entries.filter((e: any) => e.source !== "zotero" && typeof e.id === "string").map((e: any) => e.id);
     } else if (Array.isArray(body?.ids)) {
-      targets = body.ids.filter((id) => typeof id === "string" && id);
+      targets = body.ids.filter((id: any) => typeof id === "string" && id);
     } else {
       return c.json({ error: "bad_request", hint: "需要 ids 数组或 all=true" }, 400);
     }
     const removable = new Set(
-      entries.filter((e) => typeof e.id === "string" && targets.includes(e.id) && e.source !== "zotero").map((e) => e.id)
+      entries.filter((e: any) => typeof e.id === "string" && targets.includes(e.id) && e.source !== "zotero").map((e: any) => e.id)
     );
     if (removable.size === 0) return c.json({ ok: true, removed: 0 });
-    const result = store.update("literature", doc.version, (cur) => ({
-      entries: /** @type {any[]} */ (cur.entries || []).filter((e) => typeof e.id !== "string" || !removable.has(e.id)),
+    const result = store.update("literature", doc.version, (cur: any) => ({
+      entries: (cur.entries || [] as any[]).filter((e: any) => typeof e.id !== "string" || !removable.has(e.id)),
     }));
     if (!result.ok) {
       return c.json({ error: "conflict", hint: "文献库已变更，请刷新后重试" }, 409);
@@ -313,20 +313,20 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── E3：手动增强（✨ AI 摘要：生成/翻译摘要 + 提取关键词；fire-and-forget 启动新一轮循环铺完） ──
-  app.post("/literature/enhance-pdfs", async (/** @type {any} */ c) => {
+  app.post("/literature/enhance-pdfs", async (c: any) => {
     runEnhancementLoop(ctx, store)
-      .then((r) => {
+      .then((r: any) => {
         store.bump("literature");
         ctx.log?.info(`manual enhance loop done: ${r.rounds} round(s)`);
       })
-      .catch((err) => ctx.log?.warn("manual enhance failed:", err instanceof Error ? err.message : String(err)));
+      .catch((err: any) => ctx.log?.warn("manual enhance failed:", err instanceof Error ? err.message : String(err)));
     return c.json({ ok: true, started: true, hint: "补全已在后台启动，约 10-20 分钟完成，稍后刷新面板查看" });
   });
 
   // ── Zotero 状态探测（面板标注用，5 分钟节流） ─────────────────
   /** @type {{at: number, result: any}} */
-  let zoteroProbeCache = { at: 0, result: null };
-  app.get("/sources/zotero", async (/** @type {any} */ c) => {
+  let zoteroProbeCache: { at: number, result: any } = { at: 0, result: null };
+  app.get("/sources/zotero", async (c: any) => {
     const port = ctx.config?.get?.("zoteroPort") ?? 23119;
     const now = Date.now();
     if (zoteroProbeCache.result && now - zoteroProbeCache.at < 5 * 60 * 1000) {
@@ -338,7 +338,7 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // 手动重试探测（绕过节流缓存）
-  app.post("/sources/zotero/probe", async (/** @type {any} */ c) => {
+  app.post("/sources/zotero/probe", async (c: any) => {
     const port = ctx.config?.get?.("zoteroPort") ?? 23119;
     const probe = await zoteroProbe(ctx, port);
     zoteroProbeCache = { at: Date.now(), result: probe };
@@ -346,7 +346,7 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── P1：指标时间线（从实验记录抽取性能数值，按体系/时间分组） ──
-  app.get("/metrics/series", (/** @type {any} */ c) => {
+  app.get("/metrics/series", (c: any) => {
     const worklog = store.read("worklog");
     const literature = store.read("literature");
     const result = buildMetricsSeries(worklog.entries || [], literature.entries || []);
@@ -354,7 +354,7 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 设置抽屉：指标目标值（用户自设的 ZT/PF 等目标线，持久化到 settings） ──
-  app.post("/settings/metrics", async (/** @type {any} */ c) => {
+  app.post("/settings/metrics", async (c: any) => {
     /** @type {Record<string, any>} */
     let body;
     try {
@@ -371,8 +371,8 @@ export default function registerApiRoutes(app, ctx) {
       return c.json({ error: "missing_targets" }, 400);
     }
     // 仅保留数值或 null，过滤非法输入
-    /** @type {Record<string, number|null>} */
-    const clean = {};
+    
+    const clean: Record<string, number|null> = {};
     for (const [k, v] of Object.entries(targets)) {
       if (v === null || v === undefined) clean[k] = null;
       else if (Number.isFinite(Number(v))) clean[k] = Number(v);
@@ -382,7 +382,7 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 设置抽屉：检索年份窗口（默认近 N 年，在线检索/自动搜集共用） ──
-  app.post("/settings/search-window", async (/** @type {any} */ c) => {
+  app.post("/settings/search-window", async (c: any) => {
     /** @type {Record<string, any>} */
     let body;
     try {
@@ -404,9 +404,9 @@ export default function registerApiRoutes(app, ctx) {
 
   // ── 设置抽屉：实验记录自动巡检开关（autoTriage，默认 true）──
   // 仅控制「写入后自动巡检」；手动 force 巡检（POST /worklog/triage）不受开关限制
-  app.post("/settings/auto-triage", async (/** @type {any} */ c) => {
-    /** @type {Record<string, any>} */
-    let body = {};
+  app.post("/settings/auto-triage", async (c: any) => {
+    
+    let body: Record<string, any> = {};
     try { body = await c.req.json(); } catch {}
     const bodyCheck = AutoTriageBodySchema.safeParse(body ?? {});
     if (!bodyCheck.success) {
@@ -422,9 +422,9 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 设置抽屉：会话绑定管理 ────────────────────────────────
-  app.get("/binding", (/** @type {any} */ c) => c.json(store.read("binding")));
+  app.get("/binding", (c: any) => c.json(store.read("binding")));
 
-  app.post("/binding", async (/** @type {any} */ c) => {
+  app.post("/binding", async (c: any) => {
     /** @type {Record<string, any>} */
     let body;
     try {
@@ -455,7 +455,7 @@ export default function registerApiRoutes(app, ctx) {
     return c.json({ ok: true, binding: next, previous: current });
   });
 
-  app.delete("/binding", (/** @type {any} */ c) => {
+  app.delete("/binding", (c: any) => {
     const current = store.read("binding");
     store.write("binding", {
       sessionId: null,
@@ -471,13 +471,13 @@ export default function registerApiRoutes(app, ctx) {
   });
 
   // ── 快照/回退 ─────────────────────────────────────────────
-  app.get("/snapshots/:name", (/** @type {any} */ c) => {
+  app.get("/snapshots/:name", (c: any) => {
     const name = c.req.param("name");
     if (!WRITABLE.has(name)) return c.json({ error: "invalid_target" }, 400);
     return c.json({ snapshots: store.listSnapshots(name) });
   });
 
-  app.post("/snapshots/:name/rollback", async (/** @type {any} */ c) => {
+  app.post("/snapshots/:name/rollback", async (c: any) => {
     const name = c.req.param("name");
     if (!WRITABLE.has(name)) return c.json({ error: "invalid_target" }, 400);
     let toVersion;

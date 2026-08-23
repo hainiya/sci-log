@@ -10,10 +10,10 @@
  *
  * 宿主约定：本模块被宿主 new 实例化，ctx/register 通过属性注入，onload() 无参调用。
  */
-import { createStore } from "./server/store.js";
-import { syncZotero, runEnhancementLoop, enrichCitationCounts } from "./server/sources.js";
+import { createStore } from "./server/store.ts";
+import { syncZotero, runEnhancementLoop, enrichCitationCounts } from "./server/sources.ts";
 import { sendSessionMessage } from "@hana/plugin-runtime";
-import { generateDraft, commitDraft } from "./server/worklog-gen.js";
+import { generateDraft, commitDraft } from "./server/worklog-gen.ts";
 
 const AUTO_COLLECT_THROTTLE_MS = 10 * 60 * 1000; // 10 分钟节流
 const PENDING_DRAFT_TTL_MS = 30 * 60 * 1000; // 待确认草稿 TTL：超时视为无待确认（走空闲分支）
@@ -24,13 +24,13 @@ const PENDING_DRAFT_TTL_MS = 30 * 60 * 1000; // 待确认草稿 TTL：超时视�
  * @param {unknown} text
  * @returns {"confirm"|"reject"|"other"}
  */
-function matchVerdict(text) {
+function matchVerdict(text: unknown): "confirm"|"reject"|"other" {
   const s = String(text || "").trim().toLowerCase();
   if (!s) return "other";
   const rejectWords = ["不", "不用", "不要", "算了", "取消", "no"];
   const confirmWords = ["记录", "好", "是", "确认", "ok"];
-  if (rejectWords.some((w) => s === w || s.startsWith(w))) return "reject";
-  if (confirmWords.some((w) => s === w || s.startsWith(w))) return "confirm";
+  if (rejectWords.some((w: any) => s === w || s.startsWith(w))) return "reject";
+  if (confirmWords.some((w: any) => s === w || s.startsWith(w))) return "confirm";
   return "other";
 }
 
@@ -45,8 +45,8 @@ function matchVerdict(text) {
  * @param {string|null} [fallbackSessionId]
  * @returns {{sessionId?: string, sessionPath: string|null}}
  */
-function buildSessionTarget(event, sessionPath, fallbackSessionId = null) {
-  const trimmed = (/** @type {unknown} */ v) => (typeof v === "string" ? v.trim() : "");
+function buildSessionTarget(event: any, sessionPath: string|null|undefined, fallbackSessionId: string|null  = null): {sessionId?: string, sessionPath: string|null} {
+  const trimmed = (v: unknown) => (typeof v === "string" ? v.trim() : "");
   const sessionId = trimmed(event?.sessionId) || trimmed(fallbackSessionId) || null;
   return sessionId
     ? { sessionId, sessionPath: sessionPath || null }
@@ -54,16 +54,16 @@ function buildSessionTarget(event, sessionPath, fallbackSessionId = null) {
 }
 
 export default class MaterialsResearchCopilotPlugin {
-  /** @type {import("./server/types.js").ToolCtx} */
-  ctx = /** @type {any} */ (undefined);
+  /** @type {import("./server/types.ts").ToolCtx} */
+  ctx = (undefined as any);
   /** @type {(cleanup: (() => void) | undefined) => void} */
-  register = /** @type {any} */ (undefined);
-  /** @type {import("./server/types.js").StoreApi} */
-  _store = /** @type {any} */ (undefined);
-  /** @type {{binding: import("./server/types.js").BindingDoc|null, lastAutoCollectAt: number}} */
-  _state = /** @type {any} */ (undefined);
+  register = (undefined as any);
+  /** @type {import("./server/types.ts").StoreApi} */
+  _store = (undefined as any);
+  /** @type {{binding: import("./server/types.ts").BindingDoc|null, lastAutoCollectAt: number}} */
+  _state = (undefined as any);
   /** @type {{draft: any, sessionPath: string|null, ts: number}|null} */
-  _pendingDraft = /** @type {any} */ (undefined);
+  _pendingDraft = (undefined as any);
 
   async onload() {
     const ctx = this.ctx;
@@ -80,9 +80,9 @@ export default class MaterialsResearchCopilotPlugin {
     // 不能挂到插件实例 this 上（宿主在安装/启用时会序列化插件实例，遇到 Timeout 会抛
     // "Converting circular structure to JSON"）。全部收为局部变量，仅把 cleanup 函数交给 register()。
     const unsubSession = ctx.bus?.subscribe(
-      (/** @type {any} */ event, /** @type {any} */ sessionPath) => {
+      (event: any, sessionPath: any) => {
         // _onSessionEvent 为 async：显式接管 rejection（fire-and-forget，不让未处理拒绝逃逸）
-        this._onSessionEvent(event, sessionPath).catch((err) => {
+        this._onSessionEvent(event, sessionPath).catch((err: any) => {
           ctx.log?.warn("session event handling failed:", err instanceof Error ? err.message : String(err));
         });
       },
@@ -118,12 +118,12 @@ export default class MaterialsResearchCopilotPlugin {
         ctx.log?.info(`zotero sync: ${result.replaced} entries mirrored`);
         // 增强循环：PDF 摘要/翻译/关键词逐批铺完（异步，不阻塞；直到无目标或本轮零产出）
         runEnhancementLoop(ctx, this._store)
-          .then((r) => ctx.log?.info(`literature enhance loop: ${r.rounds} round(s)`))
-          .catch((err) => ctx.log?.warn("literature enhance failed:", err instanceof Error ? err.message : String(err)));
+          .then((r: any) => ctx.log?.info(`literature enhance loop: ${r.rounds} round(s)`))
+          .catch((err: any) => ctx.log?.warn("literature enhance failed:", err instanceof Error ? err.message : String(err)));
         // E5：OpenAlex 引用数补全（异步节流 5 条/批）
         enrichCitationCounts(ctx, this._store, 5)
-          .then((r) => ctx.log?.info(`citation enrich: ${r.processed} queried`))
-          .catch((err) => ctx.log?.warn("citation enrich failed:", err instanceof Error ? err.message : String(err)));
+          .then((r: any) => ctx.log?.info(`citation enrich: ${r.processed} queried`))
+          .catch((err: any) => ctx.log?.warn("citation enrich failed:", err instanceof Error ? err.message : String(err)));
       } else {
         ctx.log?.info(`zotero sync skipped: ${result.code || result.error}`);
       }
@@ -157,7 +157,7 @@ export default class MaterialsResearchCopilotPlugin {
    * @param {any} event
    * @param {string|null|undefined} sessionPath
    */
-  async _onSessionEvent(event, sessionPath) {
+  async _onSessionEvent(event: any, sessionPath: string | null | undefined) {
     const ctx = this.ctx;
     const boundPath = this._boundSessionPath();
     if (!boundPath || !sessionPath || sessionPath !== boundPath) return;
@@ -187,7 +187,7 @@ export default class MaterialsResearchCopilotPlugin {
           await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
             role: "assistant",
             text: res.ok ? "已记录 ✅" : `记录失败：${res.reason}`,
-          }).catch((err) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
+          }).catch((err: any) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
           return;
         }
         if (verdict === "reject") {
@@ -195,7 +195,7 @@ export default class MaterialsResearchCopilotPlugin {
           await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
             role: "assistant",
             text: "好的，已取消记录。",
-          }).catch((err) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
+          }).catch((err: any) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
           return;
         }
         // 其它消息（verdict=other）：维持待确认（首版忽略，不重总结），但不在此早退——
@@ -212,13 +212,13 @@ export default class MaterialsResearchCopilotPlugin {
     // 3) AI 主导生成：仅空闲态（无有效待确认草稿）+ 含「记录」关键词 → 异步生成草稿并回发询问
     //    （待确认期间不重复生成，避免覆盖单槽草稿；不阻塞消息流）
     if (genEnabled && !this._pendingDraft && text.includes("记录")) {
-      this._maybeGenerateWorklog(text, sessionPath).catch((err) => {
+      this._maybeGenerateWorklog(text, sessionPath).catch((err: any) => {
         ctx.log?.warn("ai worklog generate failed:", err instanceof Error ? err.message : String(err));
       });
     }
 
     // 原有 Zotero 本地库同步
-    this._syncZoteroNow().catch((err) => {
+    this._syncZoteroNow().catch((err: any) => {
       ctx.log?.warn("auto zotero sync failed:", err instanceof Error ? err.message : String(err));
     });
   }
@@ -227,22 +227,22 @@ export default class MaterialsResearchCopilotPlugin {
    * @param {string} text
    * @param {string|null|undefined} sessionPath
    */
-  async _maybeGenerateWorklog(text, sessionPath) {
+  async _maybeGenerateWorklog(text: string, sessionPath: string | null | undefined) {
     const ctx = this.ctx;
     /** @type {Array<{id: string, name: string}>} */
     let taskList = [];
     try {
       // 甘特任务提示：让 LLM 能把 taskId 关联到已有甘特任务（store.read 自带默认兜底 { tasks: [] }）
-      taskList = (this._store.read("gantt")?.tasks || []).map((t) => ({ id: t.id, name: t.name }));
+      taskList = (this._store.read("gantt")?.tasks || []).map((t: any) => ({ id: t.id, name: t.name }));
     } catch {}
 
     // prompt 缺失/输入为空/LLM 失败或无法解析时返回 null；抛错则由调用方 .catch 记日志
-    const draft = /** @type {any} */ (await generateDraft(ctx, { text, taskList }));
+    const draft = (await generateDraft(ctx, { text, taskList }) as any);
     if (!draft) {
       await sendSessionMessage(ctx, buildSessionTarget(null, sessionPath, this._state.binding?.sessionId), {
         role: "assistant",
         text: "没能从这条消息识别出可记录的实验内容，稍后再试。",
-      }).catch((err) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
+      }).catch((err: any) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
       return;
     }
 
@@ -257,6 +257,6 @@ export default class MaterialsResearchCopilotPlugin {
     await sendSessionMessage(ctx, buildSessionTarget(null, sessionPath, this._state.binding?.sessionId), {
       role: "assistant",
       text: `检测到实验记录草稿：\n${summary}\n\n回复「记录」确认，回复「不」取消。`,
-    }).catch((err) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
+    }).catch((err: any) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
   }
 }

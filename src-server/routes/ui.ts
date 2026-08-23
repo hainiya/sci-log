@@ -4,22 +4,22 @@ import { fileURLToPath } from "node:url";
 
 /**
  * @param {any} app
- * @param {import("../server/types.js").ToolCtx} ctx
+ * @param {import("../server/types.ts").ToolCtx} ctx
  */
-export default function registerPluginUiRoutes(app, ctx) {
-  app.get("/page", (/** @type {any} */ c) => c.html(renderShell(c, ctx, "page")));
-  app.get("/widget", (/** @type {any} */ c) => c.html(renderShell(c, ctx, "widget")));
+export default function registerPluginUiRoutes(app: any, ctx: import("../server/types.ts").ToolCtx) {
+  app.get("/page", (c: any) => c.html(renderShell(c, ctx, "page")));
+  app.get("/widget", (c: any) => c.html(renderShell(c, ctx, "widget")));
 }
 
 // 内联缓存：CSS/JS 内容不变，避免每次请求都读盘
 const inlineCache = new Map();
 
 /**
- * @param {import("../server/types.js").ToolCtx} ctx
+ * @param {import("../server/types.ts").ToolCtx} ctx
  * @param {string} name
  * @returns {string|null}
  */
-function inlineAsset(ctx, name) {
+function inlineAsset(ctx: import("../server/types.ts").ToolCtx, name: string): string|null {
   if (inlineCache.has(name)) return inlineCache.get(name);
   const candidates = [];
   if (ctx?.pluginDir) candidates.push(path.join(ctx.pluginDir, "assets", name));
@@ -39,11 +39,11 @@ function inlineAsset(ctx, name) {
 
 /**
  * @param {any} c
- * @param {import("../server/types.js").ToolCtx} ctx
+ * @param {import("../server/types.ts").ToolCtx} ctx
  * @param {string} surface
  * @returns {string}
  */
-function renderShell(c, ctx, surface) {
+function renderShell(c: any, ctx: import("../server/types.ts").ToolCtx, surface: string): string {
   const hanaCss = c.req.query("hana-css") || "";
   const theme = c.req.query("hana-theme") || "inherit";
   const title = "科研工作";
@@ -71,12 +71,12 @@ function renderShell(c, ctx, surface) {
   <script>
     // 面板加载诊断：任何脚本错误/资源失败都在页面上直接可见（桌面端 iframe 内 console 不可见）
     window.__mrcDiag = [];
-    window.addEventListener('error', (e) => {
+    window.addEventListener('error', (e: any) => {
       window.__mrcDiag.push('err:' + (e.message || 'unknown'));
       const el = document.getElementById('mrc-diag');
       if (el) el.textContent = window.__mrcDiag.join(' | ');
     });
-    window.addEventListener('unhandledrejection', (e) => {
+    window.addEventListener('unhandledrejection', (e: any) => {
       window.__mrcDiag.push('rej:' + String(e.reason));
       const el = document.getElementById('mrc-diag');
       if (el) el.textContent = window.__mrcDiag.join(' | ');
@@ -96,7 +96,7 @@ function renderShell(c, ctx, surface) {
 }
 
 /** @param {unknown} value @returns {string} */
-function escapeAttr(value) {
+function escapeAttr(value: unknown): string {
   return String(value)
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
@@ -104,6 +104,6 @@ function escapeAttr(value) {
 }
 
 /** @param {unknown} value @returns {string} */
-function escapeHtml(value) {
+function escapeHtml(value: unknown): string {
   return escapeAttr(value).replace(/>/g, "&gt;");
 }

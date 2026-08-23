@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createStore, MAX_SNAPSHOTS } from "../src-server/server/store.js";
+import { createStore, MAX_SNAPSHOTS } from "../src-server/server/store.ts";
 
 function freshStore() {
   return createStore(mkdtempSync(join(tmpdir(), "mrc-store-")));

@@ -8,10 +8,10 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { sampleText } from "./llm.js";
-import { triageWorklog } from "./triage.js";
-import { newId } from "./ids.js";
-import { parseDraft } from "./worklog-parse.js";
+import { sampleText } from "./llm.ts";
+import { triageWorklog } from "./triage.ts";
+import { newId } from "./ids.ts";
+import { parseDraft } from "./worklog-parse.ts";
 
 // 修复：此前仅 `export { parseDraft } from ...`（re-export 不创建本地绑定），
 // generateDraft 内引用 parseDraft 会在运行时抛 ReferenceError（checkJs 捕获）。
@@ -19,11 +19,11 @@ export { parseDraft };
 
 /**
  * 生成实验记录草稿：读 prompt → sampleText → parseDraft。
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {{ text: string, taskList?: Array<{id: string, name: string}> }} input
  * @returns {Promise<null | object>} 草稿对象；prompt 缺失 / 输入为空 / LLM 失败或无法解析时返回 null
  */
-export async function generateDraft(ctx, { text, taskList = [] }) {
+export async function generateDraft(ctx: import("./types.ts").ToolCtx, { text, taskList = [] }: { text: string, taskList?: Array<{ id: string, name: string }> }): Promise<null | object> {
   const base = readPrompt(ctx, "worklog-generate.md");
   if (!base) return null;
   const msg = String(text || "").trim();
@@ -31,7 +31,7 @@ export async function generateDraft(ctx, { text, taskList = [] }) {
   // 任务列表提示：让 LLM 能把 taskId 关联到已有甘特任务
   const taskHint = (taskList || []).length
     ? "\n\n现有甘特任务(id: 名称):\n" +
-      taskList.map((t) => `- ${t.id}: ${t.name}`).join("\n")
+      taskList.map((t: any) => `- ${t.id}: ${t.name}`).join("\n")
     : "";
   const result = await sampleText(ctx, {
     callPoint: "generateWorklog",
@@ -42,18 +42,18 @@ export async function generateDraft(ctx, { text, taskList = [] }) {
     maxTokens: 700,
     temperature: 0.3,
   });
-  return parseDraft(/** @type {any} */ (result)?.text);
+  return parseDraft((result as any)?.text);
 }
 
 /**
  * 落库：向 worklog 追加一条 AI 生成的实验记录。
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").StoreApi} store
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").StoreApi} store
  * @param {any} draft
  * @param {{ sessionPath?: string|null }} [opts]
  * @returns {{ ok: true, id: string } | { ok: false, reason: string, data?: object }}
  */
-export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
+export function commitDraft(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi, draft: any, { sessionPath = null }: { sessionPath?: string | null } = {}): { ok: true, id: string } | { ok: false, reason: string, data?: object } {
   if (!draft || !draft.content) {
     return { ok: false, reason: "empty_draft" };
   }
@@ -76,7 +76,7 @@ export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
   // store.update 内部 write(原子写)抛异常时不能让草稿静默丢失：捕获并返回明确失败，
   // 由 index.js 在收到 ok:false 后保留 _pendingDraft 供用户重试
   try {
-    const res = store.update("worklog", undefined, (cur) => ({
+    const res = store.update("worklog", undefined, (cur: any) => ({
       ...cur,
       entries: [...(cur.entries || []), entry],
     }));
@@ -89,7 +89,7 @@ export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
   const settings = store.read("settings");
   const autoTriage = ctx?.config?.get?.("autoTriage") ?? settings?.autoTriage ?? true;
   if (autoTriage) {
-    triageWorklog(ctx, store).catch((err) => {
+    triageWorklog(ctx, store).catch((err: any) => {
       ctx?.log?.warn(`triage after ai worklog commit failed: ${err?.message || err}`);
     });
   }
@@ -97,11 +97,11 @@ export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
 }
 
 /** 读 prompt（与 llm.js 同实现：顶层 import fs/path 的同步读取）。
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {string} name
  * @returns {string}
  */
-function readPrompt(ctx, name) {
+function readPrompt(ctx: import("./types.ts").ToolCtx, name: string): string {
   try {
     return fs.readFileSync(path.join(ctx.pluginDir ?? "", "prompts", name), "utf-8");
   } catch {

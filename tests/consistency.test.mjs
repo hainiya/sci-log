@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { SYSTEM_NAMES } from '../src-server/server/metrics.js';
+import { SYSTEM_NAMES } from '../src-server/server/metrics.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');

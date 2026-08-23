@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, '..', 'src-server', 'tools', 'log-work.js'), 'utf-8');
+const src = readFileSync(join(here, '..', 'src-server', 'tools', 'log-work.ts'), 'utf-8');
 
 test('O-1：step6 直接 store.read 取最新 worklog，不重复追加新条目', () => {
   assert.match(

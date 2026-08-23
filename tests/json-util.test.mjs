@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractFirstJson } from '../src-server/server/json-util.js';
+import { extractFirstJson } from '../src-server/server/json-util.ts';
 
 test('多对象：取第一个完整 JSON', () => {
   assert.equal(extractFirstJson('前文 {"a":1} 后文 {"b":2}'), '{"a":1}');

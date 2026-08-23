@@ -3,7 +3,7 @@
  * 直接 import 纯函数模块，验证：双策略抽取、体系识别、温度抽取、时间排序、
  * 文献基准、fields 形态兼容（数组/对象）、无匹配返回空。
  */
-import { buildMetricsSeries, extractLiteratureBaseline, filterSeries } from '../src-server/server/metrics.js';
+import { buildMetricsSeries, extractLiteratureBaseline, filterSeries } from '../src-server/server/metrics.ts';
 import { assert, assertFinish, assertSummary } from './helpers/assert.mjs';
 
 const worklog = [

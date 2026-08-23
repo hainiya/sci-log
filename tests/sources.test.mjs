@@ -3,13 +3,13 @@
  * 全部走 mock ctx.network.fetch / mock LLM（ctx.bus.request），不依赖实机 Zotero。
  * 用法：node tests/sources.test.mjs（由 run-all.mjs 自动收集）
  */
-import { createStore } from "../src-server/server/store.js";
+import { createStore } from "../src-server/server/store.ts";
 import {
   fetchZoteroItems,
   syncZotero,
   enhanceZoteroPdfs,
-} from "../src-server/server/sources.js";
-import { triageWorklog } from "../src-server/server/triage.js";
+} from "../src-server/server/sources.ts";
+import { triageWorklog } from "../src-server/server/triage.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";

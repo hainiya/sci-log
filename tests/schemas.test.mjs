@@ -13,7 +13,7 @@ import {
   BindingBodySchema,
   AutoTriageBodySchema,
   SearchWindowBodySchema,
-} from '../src-server/server/schemas.js';
+} from '../src-server/server/schemas.ts';
 
 console.log("== zod 边界 schema 测试 ==");
 

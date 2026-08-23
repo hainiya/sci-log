@@ -3,7 +3,7 @@
  * 直接 import 纯函数模块，验证：TSV/CSV/全角逗号解析、表头识别、温度归一、
  * 表头单位拼接、键名带温度、同测量合并、错误行、科学计数法、未知列。
  */
-import { parseMetricTable } from "../src-server/server/import-parser.js";
+import { parseMetricTable } from "../src-server/server/import-parser.ts";
 import { assert, assertFinish, assertSummary } from './helpers/assert.mjs';
 
 console.log("== 批量导入解析测试 ==");

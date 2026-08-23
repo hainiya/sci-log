@@ -5,41 +5,41 @@
  * 实验记录中心化改造后：仅保留 Zotero 本地源（去在线检索/工作区扫描）；
  * Zotero 镜像条目进文献库列表，同步时检测新收录并自动日志化到 worklog（appendLiteratureLog）。
  */
-import { summarizeFromFulltext, translateAbstract, extractLiteratureKeywords } from "./llm.js";
-import { appendLiteratureLog } from "./literature-log.js";
-import { OpenAlexWorkSchema } from "./schemas.js";
+import { summarizeFromFulltext, translateAbstract, extractLiteratureKeywords } from "./llm.ts";
+import { appendLiteratureLog } from "./literature-log.ts";
+import { OpenAlexWorkSchema } from "./schemas.ts";
 
 const FAILED_RETRY_COOLDOWN_MS = 24 * 3600 * 1000; // E4：failed 解析 24h 冷却
 const PDF_MAX_CHARS = 100000; // E3：60k→100k 保综述/长文结论段（英文约 4.5k 字符/页，≈22 页）
 const SCAN_THRESHOLD = 200; // 文本量低于该值视为扫描版（需人工补全）
 
 /** E4：failed 冷却判断（无 failedAt 视为可重试）
- * @param {import("./types.js").LiteratureEntry} entry
+ * @param {import("./types.ts").LiteratureEntry} entry
  * @returns {boolean}
  */
-function failedRetryable(entry) {
+function failedRetryable(entry: import("./types.ts").LiteratureEntry): boolean {
   if (entry.fullTextParsed !== "failed") return true;
   const t = entry.failedAt ? new Date(entry.failedAt).getTime() : NaN;
   return !Number.isFinite(t) || Date.now() - t > FAILED_RETRY_COOLDOWN_MS;
 }
 
 /**
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").StoreApi} store
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").StoreApi} store
  * @returns {any}
  */
-export function readSettings(ctx, store) {
+export function readSettings(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi): any {
   const doc = store.read("settings");
   return doc || { updatedAt: null };
 }
 
 /**
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").StoreApi} store
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").StoreApi} store
  * @param {Record<string, any>} patch
  * @returns {any}
  */
-export function writeSettings(ctx, store, patch) {
+export function writeSettings(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi, patch: Record<string, any>): any {
   const current = readSettings(ctx, store);
   const next = { ...current, ...patch, updatedAt: store.now() };
   store.write("settings", next);
@@ -47,10 +47,10 @@ export function writeSettings(ctx, store, patch) {
 }
 
 /** @param {unknown} value @returns {string|null} */
-function parseIsoDate(value) {
+function parseIsoDate(value: unknown): string|null {
   if (!value) return null;
   try {
-    return new Date(/** @type {string} */ (value)).toISOString();
+    return new Date((value as string)).toISOString();
   } catch {
     return null;
   }
@@ -60,8 +60,8 @@ function parseIsoDate(value) {
  * @param {unknown} err
  * @returns {"zotero_not_running"|"api_not_enabled"|"network_error"}
  */
-function classifyProbeError(err) {
-  const msgs = [(/** @type {any} */ (err))?.message, (/** @type {any} */ (err))?.cause?.message, (/** @type {any} */ (err))?.cause?.code, String(err || "")]
+function classifyProbeError(err: unknown): "zotero_not_running"|"api_not_enabled"|"network_error" {
+  const msgs = [((err as any))?.message, ((err as any))?.cause?.message, ((err as any))?.cause?.code, String(err || "")]
     .filter(Boolean)
     .join(" | ");
   if (/ECONNREFUSED|connection refused|refused/i.test(msgs)) return "zotero_not_running";
@@ -70,11 +70,11 @@ function classifyProbeError(err) {
 }
 
 /** Zotero 本地 API：探测可用性（显式 UA + 错误分级）
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {number|string} port
  * @returns {Promise<any>}
  */
-export async function zoteroProbe(ctx, port) {
+export async function zoteroProbe(ctx: import("./types.ts").ToolCtx, port: number|string): Promise<any> {
   let res;
   try {
     res = await ctx.network?.fetch(`http://127.0.0.1:${port}/api/users/0/items?limit=1&format=json`, {
@@ -119,11 +119,11 @@ const ZOTERO_ITEM_TYPES = [
 const ZOTERO_UA = "sci-log/0.2.0";
 
 /** Zotero fetch 封装：显式 UA + 403 兜底 zotero-allowed-request
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {string} url
  * @returns {Promise<any>}
  */
-async function zoteroFetch(ctx, url) {
+async function zoteroFetch(ctx: import("./types.ts").ToolCtx, url: string): Promise<any> {
   const opts = {
     cacheTtlMs: 0,
     timeoutMs: 10000,
@@ -150,12 +150,12 @@ async function zoteroFetch(ctx, url) {
  */
 /**
  * 获取 Zotero 附件全文（E3 三态：ok / no_index / api_error）
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {number|string} port
  * @param {string} attachmentKey
  * @returns {Promise<{kind: "ok", text: string}|{kind: "no_index"}|{kind: "api_error"}>}
  */
-async function fetchZoteroFulltext(ctx, port, attachmentKey) {
+async function fetchZoteroFulltext(ctx: import("./types.ts").ToolCtx, port: number|string, attachmentKey: string): Promise<{kind: "ok", text: string}|{kind: "no_index"}|{kind: "api_error"}> {
   if (!attachmentKey) return { kind: "api_error" };
   const url = `http://127.0.0.1:${port}/api/users/0/items/${encodeURIComponent(attachmentKey)}/fulltext`;
   let res;
@@ -181,7 +181,7 @@ async function fetchZoteroFulltext(ctx, port, attachmentKey) {
  * @param {string} fileUrl
  * @returns {string|null}
  */
-function fileUrlToPath(fileUrl) {
+function fileUrlToPath(fileUrl: string): string|null {
   if (!fileUrl || !fileUrl.startsWith("file:///")) return null;
   try {
     const url = new URL(fileUrl);
@@ -203,11 +203,11 @@ function fileUrlToPath(fileUrl) {
  */
 /**
  * Zotero 全量同步（A1）：无 limit 全量拉取 + Total-Results 校验
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {number|string} port
  * @returns {Promise<any>}
  */
-export async function fetchZoteroItems(ctx, port) {
+export async function fetchZoteroItems(ctx: import("./types.ts").ToolCtx, port: number|string): Promise<any> {
   // 注意：itemType OR 过滤是 value 用 || 连接（itemType=journalArticle||conferencePaper），
   // 不能重复 itemType= 前缀（旧写法导致 0 条，静默降级隐藏 bug）
   const typeFilter = ZOTERO_ITEM_TYPES.join("||");
@@ -278,7 +278,7 @@ export async function fetchZoteroItems(ctx, port) {
     entries.push({
       title,
       authors: (d.creators || [])
-        .map((/** @type {any} */ c) => [c.firstName, c.lastName].filter(Boolean).join(" "))
+        .map((c: any) => [c.firstName, c.lastName].filter(Boolean).join(" "))
         .filter(Boolean),
       authorSummary: item?.meta?.creatorSummary || null,
       year: typeof parsedDate === "string" && parsedDate ? parsedDate.slice(0, 4) : d.date ? String(d.date).slice(0, 4) : null,
@@ -308,11 +308,11 @@ export async function fetchZoteroItems(ctx, port) {
  * 实测：collections 端点返回 key/name/parentCollection 字段，全量拉取无分页负担。
  */
 /**
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {number|string} port
  * @returns {Promise<any>}
  */
-export async function fetchZoteroCollections(ctx, port) {
+export async function fetchZoteroCollections(ctx: import("./types.ts").ToolCtx, port: number|string): Promise<any> {
   const url = `http://127.0.0.1:${port}/api/users/0/collections?format=json`;
   let data = [];
   try {
@@ -324,17 +324,17 @@ export async function fetchZoteroCollections(ctx, port) {
   }
   if (!Array.isArray(data)) return [];
   return data
-    .map((c) => ({
+    .map((c: any) => ({
       key: c?.key || null,
       name: String(c?.data?.name || "").trim() || null,
       parentCollection: c?.data?.parentCollection || null,
     }))
-    .filter((c) => c.key && c.name);
+    .filter((c: any) => c.key && c.name);
 }
 
 /** 指纹：doi 小写 || title 小写（与 store.append 口径一致） */
 /** @param {any} entry @returns {string[]} */
-function fingerprintsOf(entry) {
+function fingerprintsOf(entry: any): string[] {
   const fps = [];
   if (typeof entry.doi === "string" && entry.doi.trim()) fps.push(`doi=${entry.doi.trim().toLowerCase()}`);
   if (typeof entry.title === "string" && entry.title.trim()) fps.push(`title=${entry.title.trim().toLowerCase()}`);
@@ -346,7 +346,7 @@ function fingerprintsOf(entry) {
  * （用户知识库可信度高于在线检索条目）
  */
 /** @param {any[]} entries @returns {any} */
-export function dedupeZoteroPriority(entries) {
+export function dedupeZoteroPriority(entries: any[]): any {
   const seen = new Map();
   const order = [];
   for (const e of entries) {
@@ -391,17 +391,17 @@ export function dedupeZoteroPriority(entries) {
  * 调用方循环调度（runEnhancementLoop）：每轮批 batchLimit 条、LLM 预算 llmLimit 次。
  */
 /**
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").StoreApi} store
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").StoreApi} store
  * @param {number} [batchLimit]
  * @param {number} [llmLimit]
  * @returns {Promise<any>}
  */
-export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3) {
+export async function enhanceZoteroPdfs(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi, batchLimit: number  = 8, llmLimit: number  = 3): Promise<any> {
   const zoteroPort = ctx.config?.get?.("zoteroPort") ?? 23119;
   const doc = store.read("literature");
   const targets = (doc.entries || []).filter(
-    (e) =>
+    (e: any) =>
       // 既有 Zotero 摘要/PDF 目标（不变；pdfKey||pdfPath 兼容 fulltext 迁移前的旧镜像，待下次同步补 pdfKey）
       (e.source === "zotero" &&
         (((e.pdfKey || e.pdfPath) && (!e.fullTextParsed || (e.fullTextParsed === "failed" && failedRetryable(e)))) ||
@@ -422,13 +422,13 @@ export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3
   let summaries = 0;
   let keywords = 0;
   /** @param {string|undefined} zoteroKey @param {Record<string, any>} patch */
-  const patchEntry = (zoteroKey, patch) => {
-    store.update("literature", undefined, (cur) => ({
-      entries: /** @type {any[]} */ (cur.entries || []).map((e) => (e.zoteroKey === zoteroKey ? { ...e, ...patch } : e)),
+  const patchEntry = (zoteroKey: any, patch: any): void => {
+    store.update("literature", undefined, (cur: any) => ({
+      entries: (cur.entries || [] as any[]).map((e: any) => (e.zoteroKey === zoteroKey ? { ...e, ...patch } : e)),
     }));
   };
   /** @param {string|undefined} zoteroKey */
-  const patchFailed = (zoteroKey) => patchEntry(zoteroKey, { fullTextParsed: "failed", failedAt: new Date().toISOString() });
+  const patchFailed = (zoteroKey: any): void => patchEntry(zoteroKey, { fullTextParsed: "failed", failedAt: new Date().toISOString() });
 
   for (const entry of batch) {
     try {
@@ -444,8 +444,8 @@ export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3
                 patchEntry(entry.zoteroKey, patchBase);
               } else {
                 // 在线条目无 zoteroKey，按 e.id 匹配更新
-                store.update("literature", undefined, (cur) => ({
-                  entries: /** @type {any[]} */ (cur.entries || []).map((e) => (e.id === entry.id ? { ...e, ...patchBase } : e)),
+                store.update("literature", undefined, (cur: any) => ({
+                  entries: (cur.entries || [] as any[]).map((e: any) => (e.id === entry.id ? { ...e, ...patchBase } : e)),
                 }));
               }
               llmUsed += 1;
@@ -503,8 +503,8 @@ export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3
         continue;
       }
       const isScan = ft.text.length < SCAN_THRESHOLD;
-      /** @type {Record<string, any>} */
-      const patch = isScan
+      
+      const patch: Record<string, any> = isScan
         ? { fullTextParsed: "scan", failedAt: null }
         : { fullTextParsed: "ok", fullText: ft.text.slice(0, PDF_MAX_CHARS), failedAt: null };
       // 摘要生成：abstract 空且文本可用
@@ -537,11 +537,11 @@ export async function enhanceZoteroPdfs(ctx, store, batchLimit = 8, llmLimit = 3
  * 终止条件：无目标（processed === 0）或本轮零产出（防止 LLM 持续失败死循环）
  */
 /**
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").StoreApi} store
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").StoreApi} store
  * @returns {Promise<any>}
  */
-export async function runEnhancementLoop(ctx, store) {
+export async function runEnhancementLoop(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi): Promise<any> {
   let rounds = 0;
   for (;;) {
     const r = await enhanceZoteroPdfs(ctx, store, 8, 3);
@@ -553,7 +553,7 @@ export async function runEnhancementLoop(ctx, store) {
 
 /** 判断文本是否含中文（含中文视为已是中文摘要，不翻译） */
 /** @param {unknown} text @returns {boolean} */
-function isEnglishText(text) {
+function isEnglishText(text: unknown): boolean {
   const s = String(text || "").trim();
   if (!s) return false;
   return !/\p{Script=Han}/u.test(s);
@@ -564,11 +564,11 @@ function isEnglishText(text) {
  * 供 scanAllSources 与 index.js 同步定时器复用
  */
 /**
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").StoreApi} store
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").StoreApi} store
  * @returns {Promise<any>}
  */
-export async function syncZotero(ctx, store) {
+export async function syncZotero(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi): Promise<any> {
   const zoteroPort = ctx.config?.get?.("zoteroPort") ?? 23119;
   const probe = await zoteroProbe(ctx, zoteroPort);
   if (!probe.ok) {
@@ -588,22 +588,22 @@ export async function syncZotero(ctx, store) {
   // C3：镜像替换时保留旧条目的 PDF 增强字段（fullText/fullTextParsed/AI 摘要），避免每次同步丢失重解析
   const prev = store.read("literature");
   const prevByKey = new Map(
-    (prev.entries || []).filter((e) => e.zoteroKey).map((e) => [e.zoteroKey, e])
+    (prev.entries || []).filter((e: any) => e.zoteroKey).map((e: any) => [e.zoteroKey, e])
   );
   // 空响应保护（P1-5）：旧库存在镜像条目而本次拉取为空 → 视为同步异常（端口被占/API 异常/分页截断），
   // 整体跳过本次同步——不替换、不标记 zoteroGone（upsertByKey 的替换语义会把镜像条目直接清空）。
-  const hasMirror = (prev.entries || []).some((e) => e.zoteroKey && e.source === "zotero");
+  const hasMirror = (prev.entries || []).some((e: any) => e.zoteroKey && e.source === "zotero");
   if (items.length === 0 && (hasMirror || truncated)) {
     ctx.log?.warn?.(`zotero sync: ${truncated ? "分页截断" : "空响应"}且${hasMirror ? "旧库存在镜像条目" : "首次同步"}，跳过本次同步（疑似同步异常）`);
     writeSettings(ctx, store, { zoteroLastSyncAt: store.now(), zoteroCount: 0, zoteroSyncSkipped: true });
     return { ok: true, entries: [], replaced: 0, gone: 0, skipped: true };
   }
   // E4：Zotero 删除同步——本次拉取缺失的镜像条目打 zoteroGone（保留数据，UI 置灰 + 一键清除）
-  const liveKeys = new Set(items.filter((i) => i.zoteroKey).map((i) => i.zoteroKey));
+  const liveKeys = new Set(items.filter((i: any) => i.zoteroKey).map((i: any) => i.zoteroKey));
   const goneEntries = (prev.entries || [])
-    .filter((e) => e.zoteroKey && e.source === "zotero" && !liveKeys.has(e.zoteroKey) && !e.zoteroGone)
-    .map((e) => ({ ...e, zoteroGone: true, zoteroGoneAt: store.now() }));
-  const merged = items.map((it) => {
+    .filter((e: any) => e.zoteroKey && e.source === "zotero" && !liveKeys.has(e.zoteroKey) && !e.zoteroGone)
+    .map((e: any) => ({ ...e, zoteroGone: true, zoteroGoneAt: store.now() }));
+  const merged = items.map((it: any) => {
     const old = prevByKey.get(it.zoteroKey);
     if (!old) {
       // E2：新条目无摘要 → 待补全标记（有摘要保持 zotero_original 待翻译）
@@ -614,8 +614,8 @@ export async function syncZotero(ctx, store) {
       }
       return base;
     }
-    /** @type {Record<string, any>} */
-    const patch = {};
+    
+    const patch: Record<string, any> = {};
     // D1（复审）：pdfPath/pdfKey 兜底保留——附件映射一次失败（API 5xx/403 兜底仍失败）会让
     // 本轮所有条目 pdfKey 变 null，增强循环整体停摆；旧值保留则下次同步恢复，窗口期只影响增量
     if (!it.pdfPath && old.pdfPath) patch.pdfPath = old.pdfPath;
@@ -643,7 +643,7 @@ export async function syncZotero(ctx, store) {
   writeSettings(ctx, store, { zoteroLastSyncAt: store.now(), zoteroCount: items.length, zoteroSyncSkipped: false });
 
   // 实验记录中心化：检测本次新增的 Zotero 条目（zoteroKey 未在旧库出现），自动日志化到 worklog
-  const newEntries = merged.filter((it) => !prevByKey.has(it.zoteroKey));
+  const newEntries = merged.filter((it: any) => !prevByKey.has(it.zoteroKey));
   if (newEntries.length > 0 && result.ok) {
     try {
       appendLiteratureLog(store, newEntries, `zotero-sync-${store.now()}`);
@@ -660,15 +660,15 @@ export async function syncZotero(ctx, store) {
  * Zotero 镜像条目 citationCount 恒 null，「引用排序」对主库无效——用 OpenAlex cited_by_count 补
  */
 /**
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").StoreApi} store
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").StoreApi} store
  * @param {number} [batchLimit]
  * @returns {Promise<any>}
  */
-export async function enrichCitationCounts(ctx, store, batchLimit = 5) {
+export async function enrichCitationCounts(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi, batchLimit: number  = 5): Promise<any> {
   const doc = store.read("literature");
   const targets = (doc.entries || []).filter(
-    (e) => e.source === "zotero" && e.doi && e.citationCount == null && !e.zoteroGone
+    (e: any) => e.source === "zotero" && e.doi && e.citationCount == null && !e.zoteroGone
   );
   if (targets.length === 0) return { processed: 0 };
   const batch = targets.slice(0, batchLimit);
@@ -688,8 +688,8 @@ export async function enrichCitationCounts(ctx, store, batchLimit = 5) {
       }
       const c = data?.cited_by_count;
       if (typeof c === "number") {
-        store.update("literature", undefined, (cur) => ({
-          entries: /** @type {any[]} */ (cur.entries || []).map((e) =>
+        store.update("literature", undefined, (cur: any) => ({
+          entries: (cur.entries || [] as any[]).map((e: any) =>
             e.zoteroKey === entry.zoteroKey ? { ...e, citationCount: c } : e
           ),
         }));
@@ -704,11 +704,11 @@ export async function enrichCitationCounts(ctx, store, batchLimit = 5) {
  * 返回 { entries, warnings, sourceStats }
  */
 /**
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").StoreApi} store
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").StoreApi} store
  * @returns {Promise<any>}
  */
-export async function scanAllSources(ctx, store) {
+export async function scanAllSources(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi): Promise<any> {
   const entries = [];
   const warnings = [];
   const sourceStats = { zotero: 0 };

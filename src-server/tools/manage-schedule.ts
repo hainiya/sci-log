@@ -2,9 +2,9 @@
  * manage_schedule：甘特任务 / 任务清单 / 日历日程 的增删改
  * AI 写即生效（去提案）：增删改直接写库，乐观锁由 store 兜底。
  */
-import { createStore } from "../server/store.js";
-import { ensureAutoBinding } from "../server/binding.js";
-import { newId } from "../server/ids.js";
+import { createStore } from "../server/store.ts";
+import { ensureAutoBinding } from "../server/binding.ts";
+import { newId } from "../server/ids.ts";
 
 export const name = "manage_schedule";
 export const description =
@@ -46,10 +46,10 @@ export const sessionPermission = {
 
 /**
  * @param {Record<string, any>} input
- * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @param {import("../server/types.ts").ToolCtx} toolCtx
  * @returns {Promise<any>}
  */
-export async function execute(input = {}, toolCtx) {
+export async function execute(input: Record<string, any>  = {}, toolCtx: import("../server/types.ts").ToolCtx): Promise<any> {
   const store = createStore(toolCtx.dataDir);
   const { action, target } = input;
   ensureAutoBinding(toolCtx);
@@ -58,7 +58,7 @@ export async function execute(input = {}, toolCtx) {
   const listField = target === "gantt" ? "tasks" : "events";
 
   if (action === "read") {
-    const doc = /** @type {Record<string, any>} */ (store.read(target));
+    const doc = (store.read(target) as Record<string, any>);
     const list = doc[listField] || [];
     const text =
       target === "gantt"
@@ -91,23 +91,23 @@ export async function execute(input = {}, toolCtx) {
             type: input.data.type || "default",
             taskId: input.data.taskId || null,
           };
-    store.update(target, undefined, (cur) => ({ [listField]: [...(cur[listField] || []), item] }));
+    store.update(target, undefined, (cur: any) => ({ [listField]: [...(cur[listField] || []), item] }));
     return { content: [{ type: "text", text: `已创建${target === "gantt" ? "甘特任务" : "日历日程"}：${item.name || item.title}` }] };
   }
 
   if (action === "update") {
     if (!input.id) throw new Error("update 需要 id 参数");
     if (!input.data || typeof input.data !== "object") throw new Error("update 需要 data 参数");
-    store.update(target, undefined, (cur) => ({
-      [listField]: /** @type {any[]} */ (cur[listField] || []).map((e) => (e.id === input.id ? { ...e, ...input.data } : e)),
+    store.update(target, undefined, (cur: any) => ({
+      [listField]: (cur[listField] || [] as any[]).map((e: any) => (e.id === input.id ? { ...e, ...input.data } : e)),
     }));
     return { content: [{ type: "text", text: `已更新${target === "gantt" ? "任务" : "日程"} ${input.id}` }] };
   }
 
   if (action === "delete") {
     if (!input.id) throw new Error("delete 需要 id 参数");
-    store.update(target, undefined, (cur) => ({
-      [listField]: /** @type {any[]} */ (cur[listField] || []).filter((e) => e.id !== input.id),
+    store.update(target, undefined, (cur: any) => ({
+      [listField]: (cur[listField] || [] as any[]).filter((e: any) => e.id !== input.id),
     }));
     return { content: [{ type: "text", text: `已删除 ${target} 条目 ${input.id}` }] };
   }

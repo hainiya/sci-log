@@ -9,25 +9,25 @@
  *
  * 实验记录中心化改造后：不再生成提案，不再写 reviews 留痕，不做方案对比/重做/再平衡。
  */
-import { triageWorkEntry } from "./llm.js";
+import { triageWorkEntry } from "./llm.ts";
 
 let running = false; // 进程内并发锁：同一时刻只跑一轮巡检
 
 const BATCH_MAX = 3; // 每轮最多巡检条数（每条一次 LLM 调用）
 
 /** @returns {string} */
-function localToday() {
+function localToday(): string {
   const d = new Date();
-  const pad = (/** @type {number} */ n) => String(n).padStart(2, "0");
+  const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /**
- * @param {import("./types.js").ToolCtx} ctx 宿主上下文
- * @param {import("./types.js").StoreApi} store 数据存储
+ * @param {import("./types.ts").ToolCtx} ctx 宿主上下文
+ * @param {import("./types.ts").StoreApi} store 数据存储
  * @param {{ force?: boolean }} [options] force=true 时重巡检最近 BATCH_MAX 条
  */
-export async function triageWorklog(ctx, store, { force = false } = {}) {
+export async function triageWorklog(ctx: import("./types.ts").ToolCtx, store: import("./types.ts").StoreApi, { force = false } = {}) {
   if (running) return { skipped: true };
   running = true;
   try {
@@ -44,7 +44,7 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
     const pending = force
       ? entries.slice(-BATCH_MAX)
       : entries
-          .filter((e) => {
+          .filter((e: any) => {
             if (!since) return true;
             const t = String(e.createdAt || "");
             if (t > since) return true;
@@ -61,8 +61,8 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
     let triaged = 0;
     let updated = 0;
     let reviewedAt = since; // 逐条推进水位线：失败的条目不推进
-    /** @type {string[]} */ // 本轮成功巡检的条目 id（写回 aiReviewedIds 供同毫秒补捞判重）
-    const successIds = [];
+    /** 本轮成功巡检的条目 id（写回 aiReviewedIds 供同毫秒补捞判重） */
+    const successIds: string[] = [];
 
     for (const entry of pending) {
       let out;
@@ -84,8 +84,8 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
       const systemChanged = out.system && entry.system !== out.system;
       if (out.fields.length > 0 || out.citations.length > 0 || systemChanged) {
         try {
-          store.update("worklog", undefined, (cur) => ({
-            entries: /** @type {any[]} */(cur.entries || []).map((e) =>
+          store.update("worklog", undefined, (cur: any) => ({
+            entries: (cur.entries || [] as any[]).map((e: any) =>
               e.id === entry.id
                 ? {
                     ...e,
@@ -105,8 +105,8 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
       // 1.5 时长补全：记录未填时长且巡检提取到明确时长 → 直接写库（甘特实际时间线）
       if (out.durationHours && !entry.durationHours) {
         try {
-          store.update("worklog", undefined, (cur) => ({
-            entries: /** @type {any[]} */(cur.entries || []).map((e) =>
+          store.update("worklog", undefined, (cur: any) => ({
+            entries: (cur.entries || [] as any[]).map((e: any) =>
               e.id === entry.id
                 ? { ...e, durationHours: out.durationHours, ...(out.startDate ? { startDate: out.startDate } : {}) }
                 : e
@@ -121,8 +121,8 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
       // 2. 甘特进度（LLM 推断任务关联，直接写库）
       for (const tp of out.taskProgress) {
         try {
-          store.update("gantt", undefined, (cur) => ({
-            tasks: /** @type {any[]} */(cur.tasks || []).map((t) => (t.id === tp.taskId ? { ...t, progress: tp.progress } : t)),
+          store.update("gantt", undefined, (cur: any) => ({
+            tasks: (cur.tasks || [] as any[]).map((t: any) => (t.id === tp.taskId ? { ...t, progress: tp.progress } : t)),
           }));
           updated += 1;
         } catch (err) {
@@ -155,11 +155,11 @@ export async function triageWorklog(ctx, store, { force = false } = {}) {
 
     // 推进水位线（仅已成功巡检的条目不重跑；aiReviewedIds 记录水位线时刻已处理的 id）
     if (triaged > 0) {
-      store.update("worklog", undefined, (cur) => {
-        const entries = /** @type {any[]} */ (cur.entries || []);
+      store.update("worklog", undefined, (cur: any) => {
+        const entries = (cur.entries || [] as any[]);
         const prevIds = Array.isArray(cur.meta?.aiReviewedIds) ? cur.meta.aiReviewedIds : [];
-        const tickIds = new Set(entries.filter((e) => String(e.createdAt || "") === reviewedAt).map((e) => e.id));
-        const kept = [...new Set([...prevIds, ...successIds])].filter((id) => tickIds.has(id));
+        const tickIds = new Set(entries.filter((e: any) => String(e.createdAt || "") === reviewedAt).map((e: any) => e.id));
+        const kept = [...new Set([...prevIds, ...successIds])].filter((id: any) => tickIds.has(id));
         return {
           ...cur,
           meta: {

@@ -4,10 +4,10 @@
  * - AI 巡检补全甘特进度与日程安排（直接写库）
  * - sampleText() 生成下一步提示（只读建议，不落库；结合已排日程避免冲突）
  */
-import { createStore } from "../server/store.js";
-import { nextStepAdvice, triageWorkEntry } from "../server/llm.js";
-import { ensureAutoBinding } from "../server/binding.js";
-import { newId } from "../server/ids.js";
+import { createStore } from "../server/store.ts";
+import { nextStepAdvice, triageWorkEntry } from "../server/llm.ts";
+import { ensureAutoBinding } from "../server/binding.ts";
+import { newId } from "../server/ids.ts";
 
 export const name = "log_work";
 export const description =
@@ -66,10 +66,10 @@ export const sessionPermission = {
 
 /**
  * @param {Record<string, any>} input
- * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @param {import("../server/types.ts").ToolCtx} toolCtx
  * @returns {Promise<any>}
  */
-export async function execute(input = {}, toolCtx) {
+export async function execute(input: Record<string, any>  = {}, toolCtx: import("../server/types.ts").ToolCtx): Promise<any> {
   const store = createStore(toolCtx.dataDir);
   const content = String(input.content || "").trim();
   if (!content) throw new Error("content 不能为空");
@@ -101,8 +101,8 @@ export async function execute(input = {}, toolCtx) {
   const calendar = store.read("calendar");
 
   // 1. 构造实验记录条目
-  /** @type {import("../server/types.js").WorklogEntry} */
-  const worklogEntry = {
+  
+  const worklogEntry: import("../server/types.ts").WorklogEntry = {
     id: newId("work"),
     date,
     content,
@@ -137,15 +137,15 @@ export async function execute(input = {}, toolCtx) {
   }
 
   // 3. 实验记录写入（AI 写即生效；参数/文献已并入条目）
-  store.update("worklog", undefined, (cur) => ({
+  store.update("worklog", undefined, (cur: any) => ({
     entries: [...(cur.entries || []), worklogEntry],
   }));
 
   // 3.5 时长补全：记录未填时长且巡检提取到明确时长 → 直接写库（甘特实际时间线）
   if (out?.durationHours && !worklogEntry.durationHours) {
     try {
-      store.update("worklog", undefined, (cur) => ({
-        entries: /** @type {any[]} */ (cur.entries || []).map((e) =>
+      store.update("worklog", undefined, (cur: any) => ({
+        entries: (cur.entries || [] as any[]).map((e: any) =>
           e.id === worklogEntry.id
             ? { ...e, durationHours: out.durationHours, ...(out.startDate ? { startDate: out.startDate } : {}) }
             : e
@@ -159,10 +159,10 @@ export async function execute(input = {}, toolCtx) {
   // 4. 巡检产出：甘特进度 + 日程（直接写库，与面板异步巡检一致）
   if (out) {
     for (const tp of out.taskProgress || []) {
-      const task = (gantt.tasks || []).find((t) => t.id === tp.taskId);
+      const task = (gantt.tasks || []).find((t: any) => t.id === tp.taskId);
       try {
-        store.update("gantt", undefined, (cur) => ({
-          tasks: /** @type {any[]} */ (cur.tasks || []).map((t) => (t.id === tp.taskId ? { ...t, progress: tp.progress } : t)),
+        store.update("gantt", undefined, (cur: any) => ({
+          tasks: (cur.tasks || [] as any[]).map((t: any) => (t.id === tp.taskId ? { ...t, progress: tp.progress } : t)),
         }));
       } catch (err) {
         toolCtx?.log?.warn?.(`log_work gantt progress failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -196,12 +196,12 @@ export async function execute(input = {}, toolCtx) {
   // 5. 甘特进度更新（直接写库；来自用户输入 progressUpdates）
   let progressCount = 0;
   for (const update of input.progressUpdates || []) {
-    const task = (gantt.tasks || []).find((t) => t.id === update.taskId);
+    const task = (gantt.tasks || []).find((t: any) => t.id === update.taskId);
     if (!task) continue;
     const progress = Math.min(Math.max(Number(update.progress) || 0, 0), 100);
     try {
-      store.update("gantt", undefined, (cur) => ({
-        tasks: /** @type {any[]} */ (cur.tasks || []).map((t) => (t.id === update.taskId ? { ...t, progress } : t)),
+      store.update("gantt", undefined, (cur: any) => ({
+        tasks: (cur.tasks || [] as any[]).map((t: any) => (t.id === update.taskId ? { ...t, progress } : t)),
       }));
       progressCount += 1;
     } catch (err) {
@@ -222,11 +222,11 @@ export async function execute(input = {}, toolCtx) {
       advice = adviceObj.text || "";
       // 把下一步建议中可排程的具体行动，直接排入日历（与 triage events 去重）
       const existingCal = store.read("calendar").events || [];
-      const triageKeys = new Set(/** @type {any[]} */ (out?.events || []).map((ev) => `${ev.title}|${ev.date}`));
-      const sameDay = /** @type {(d1: any, d2: any) => boolean} */ ((d1, d2) => d1 && d2 && Math.abs(new Date(d1).getTime() - new Date(d2).getTime()) <= 2 * 86400000);
+      const triageKeys = new Set((out?.events || [] as any[]).map((ev: any) => `${ev.title}|${ev.date}`));
+      const sameDay = /** @type {(d1: any, d2: any) => boolean} */ ((d1: any, d2: any) => d1 && d2 && Math.abs(new Date(d1).getTime() - new Date(d2).getTime()) <= 2 * 86400000);
       for (const item of adviceObj.schedule || []) {
         if (triageKeys.has(`${item.title}|${item.due}`)) continue;
-        if (existingCal.some((ev) => ev.title === item.title && sameDay(ev.date, item.due))) continue;
+        if (existingCal.some((ev: any) => ev.title === item.title && sameDay(ev.date, item.due))) continue;
         try {
           store.append("calendar", [
             { id: newId("evt"), title: item.title, date: item.due, startTime: null, endTime: null, type: item.type, taskId: null },

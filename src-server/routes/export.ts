@@ -8,24 +8,24 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { createStore } from "../server/store.js";
-import { safeName, renderWorklogMarkdown } from "../server/export-util.js";
+import { createStore } from "../server/store.ts";
+import { safeName, renderWorklogMarkdown } from "../server/export-util.ts";
 
 const EXPORT_DIR = "exports";
 
 /**
  * @param {any} app
- * @param {import("../server/types.js").ToolCtx} ctx
+ * @param {import("../server/types.ts").ToolCtx} ctx
  */
-export default function registerExportRoutes(app, ctx) {
+export default function registerExportRoutes(app: any, ctx: import("../server/types.ts").ToolCtx) {
   const store = createStore(ctx.dataDir);
   // stageFile 由宿主 plugin-context 提供（spike③ 已验证），本地断言为非可选避免逐点可选链
-  const stageFile = /** @type {(input: Record<string, any>) => any} */ (ctx.stageFile);
+  const stageFile = (ctx.stageFile as (input: Record<string, any>) => any);
 
   // E1：待整理批量 RIS（非 Zotero 条目进入 Zotero 的唯一通道；9.x 无写 API）
-  app.post("/export/ris-batch", async (/** @type {any} */ c) => {
+  app.post("/export/ris-batch", async (c: any) => {
     const literature = store.read("literature");
-    const entries = (literature.entries || []).filter((e) => e.source !== "zotero");
+    const entries = (literature.entries || []).filter((e: any) => e.source !== "zotero");
     if (entries.length === 0) return c.json({ error: "no_to_organize", hint: "待整理分组为空：非 Zotero 条目均已归类" }, 404);
     const content = entries.map(renderRis).join("\n");
     const binding = store.read("binding");
@@ -42,13 +42,12 @@ export default function registerExportRoutes(app, ctx) {
       const staged = stageFile({ sessionId, sessionPath, filePath, label: path.basename(filePath) });
       return c.json({ ok: true, count: entries.length, file: { fileId: staged?.file?.fileId, label: path.basename(filePath) } });
     } catch (err) {
-      ctx.log?.error("ris-batch stage failed:", /** @type {Error} */ (err).message);
-      return c.json({ error: "stage_failed", detail: /** @type {Error} */ (err).message }, 500);
+      ctx.log?.error("ris-batch stage failed:", (err as Error).message);
+      return c.json({ error: "stage_failed", detail: (err as Error).message }, 500);
     }
   });
 
-  /** @param {import("../server/types.js").LiteratureEntry} e @returns {string} */
-  function renderRis(e) {
+  function renderRis(e: import("../server/types.ts").LiteratureEntry): string {
     const lines = [];
     lines.push("TY  - JOUR");
     for (const a of e.authors || []) lines.push(`AU  - ${a}`);
@@ -63,7 +62,7 @@ export default function registerExportRoutes(app, ctx) {
     return lines.join("\n") + "\n";
   }
 
-  app.get("/export/:type", async (/** @type {any} */ c) => {
+  app.get("/export/:type", async (c: any) => {
     const type = c.req.param("type");
     const id = c.req.query("id") || null;
     // 投递目标：优先请求里的 surface session（未来宿主扩展），否则用绑定会话
@@ -95,8 +94,8 @@ export default function registerExportRoutes(app, ctx) {
         return c.json({ error: "invalid_type", hint: "type 支持 worklog（review/report 已随研究方案/提案移除）" }, 400);
       }
     } catch (err) {
-      ctx.log?.error("export build failed:", /** @type {Error} */ (err).message);
-      return c.json({ error: "export_failed", detail: /** @type {Error} */ (err).message }, 500);
+      ctx.log?.error("export build failed:", (err as Error).message);
+      return c.json({ error: "export_failed", detail: (err as Error).message }, 500);
     }
 
     // 生成文件 → stageFile 投递 SessionFile
@@ -119,8 +118,8 @@ export default function registerExportRoutes(app, ctx) {
         },
       });
     } catch (err) {
-      ctx.log?.error("export stage failed:", /** @type {Error} */ (err).message);
-      return c.json({ error: "stage_failed", detail: /** @type {Error} */ (err).message }, 500);
+      ctx.log?.error("export stage failed:", (err as Error).message);
+      return c.json({ error: "stage_failed", detail: (err as Error).message }, 500);
     }
   });
 }

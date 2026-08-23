@@ -7,18 +7,18 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** @param {unknown} value @returns {string} */
-function normalizeText(value) {
+function normalizeText(value: unknown): string {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 /** @param {unknown} text @returns {string} */
-function firstLine(text) {
-  const line = String(text || "").split(/\r?\n/).find((l) => l.trim());
+function firstLine(text: unknown): string {
+  const line = String(text || "").split(/\r?\n/).find((l: any) => l.trim());
   return line ? line.trim() : "";
 }
 
 /** @param {unknown} text @returns {string|null} */
-function guessYear(text) {
+function guessYear(text: unknown): string|null {
   const match = String(text || "").match(/(?:19|20)\d{2}(?!\d)/);
   return match ? match[0] : null;
 }
@@ -27,21 +27,21 @@ function guessYear(text) {
  * @param {unknown} text
  * @returns {string|null}
  */
-export function extractDoi(text) {
+export function extractDoi(text: unknown): string|null {
   const match = String(text || "").match(/10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+/);
   return match ? match[0].replace(/[.;]$/, "") : null;
 }
 
 /** RIS 解析：TY/.../ER 块
  * @param {unknown} text
- * @returns {Array<import("./types.js").LiteratureEntry>}
+ * @returns {Array<import("./types.ts").LiteratureEntry>}
  */
-export function parseRis(text) {
+export function parseRis(text: unknown): Array<import("./types.ts").LiteratureEntry> {
   const records = [];
   const blocks = String(text || "").split(/\r?\nER\s*[- ]/);
   for (const block of blocks) {
-    /** @type {Record<string, string[]>} */
-    const fields = {};
+    
+    const fields: Record<string, string[]> = {};
     for (const line of block.split(/\r?\n/)) {
       const m = line.match(/^([A-Z][A-Z0-9]{1,2})\s*-\s*(.*)$/);
       if (!m) continue;
@@ -74,9 +74,9 @@ export function parseRis(text) {
 
 /** BibTeX 解析：@type{key, field = {...}}（花括号平衡扫描，支持嵌套）
  * @param {unknown} text
- * @returns {Array<import("./types.js").LiteratureEntry>}
+ * @returns {Array<import("./types.ts").LiteratureEntry>}
  */
-export function parseBibtex(text) {
+export function parseBibtex(text: unknown): Array<import("./types.ts").LiteratureEntry> {
   const records = [];
   const src = String(text || "");
   let i = 0;
@@ -117,8 +117,8 @@ export function parseBibtex(text) {
     if (end === -1) break;
     const fieldsRaw = src.slice(keyEnd + 1, end);
     // 字段扫描：支持嵌套花括号值（LaTeX 命令/化学式）、引号值、裸数字
-    /** @type {Record<string, string>} */
-    const fields = {};
+    
+    const fields: Record<string, string> = {};
     let pos = 0;
     while (pos < fieldsRaw.length) {
       while (pos < fieldsRaw.length && /[\s,]/.test(fieldsRaw[pos])) pos++;
@@ -173,7 +173,7 @@ export function parseBibtex(text) {
       const authorStr = fields.author || fields.editor || "";
       authors = String(authorStr)
         .split(/\s+and\s+/i)
-        .map((a) => normalizeText(a))
+        .map((a: any) => normalizeText(a))
         .filter(Boolean);
       records.push({
         title,
@@ -188,7 +188,7 @@ export function parseBibtex(text) {
         abstract: normalizeText(fields.abstract || ""),
         keywords: (fields.keywords || "")
           .split(/[;,]/)
-          .map((k) => normalizeText(k))
+          .map((k: any) => normalizeText(k))
           .filter(Boolean),
         type,
       });
@@ -200,15 +200,15 @@ export function parseBibtex(text) {
 
 /** EndNote 标签格式解析（多为 .enw，也兼容 RefWorks 的 RT 开头）
  * @param {unknown} text
- * @returns {Array<import("./types.js").LiteratureEntry>}
+ * @returns {Array<import("./types.ts").LiteratureEntry>}
  */
-export function parseEndnote(text) {
+export function parseEndnote(text: unknown): Array<import("./types.ts").LiteratureEntry> {
   const records = [];
   const blocks = String(text || "").split(/\r?\n\r?\n/);
   for (const block of blocks) {
     if (!block.trim()) continue;
-    /** @type {Record<string, string[]>} */
-    const fields = {};
+    
+    const fields: Record<string, string[]> = {};
     for (const line of block.split(/\r?\n/)) {
       const m = line.match(/^([A-Za-z0-9]+)\s+(.*)$/);
       if (!m) continue;
@@ -240,7 +240,7 @@ export function parseEndnote(text) {
 export const SUPPORTED_EXTENSIONS = new Set([".ris", ".bib", ".bibtex", ".enw", ".txt"]);
 
 /** @param {string} ext @returns {"ris"|"bibtex"|"endnote"|"txt"|null} */
-export function detectFormat(ext) {
+export function detectFormat(ext: string): "ris"|"bibtex"|"endnote"|"txt"|null {
   if (ext === ".ris") return "ris";
   if (ext === ".bib" || ext === ".bibtex") return "bibtex";
   if (ext === ".enw") return "endnote";
@@ -251,9 +251,9 @@ export function detectFormat(ext) {
 /** 解析一个题录文件内容（按扩展名路由）
  * @param {string} fileName
  * @param {unknown} content
- * @returns {Array<import("./types.js").LiteratureEntry>}
+ * @returns {Array<import("./types.ts").LiteratureEntry>}
  */
-export function parseFileContent(fileName, content) {
+export function parseFileContent(fileName: string, content: unknown): Array<import("./types.ts").LiteratureEntry> {
   const ext = path.extname(fileName).toLowerCase();
   const format = detectFormat(ext);
   if (format === "ris") return parseRis(content);
@@ -268,7 +268,7 @@ export function parseFileContent(fileName, content) {
     const enw = parseEndnote(content);
     if (enw.length > 0) return enw;
     // 纯文本：按单条标题启发式识别
-    const lines = String(content).split(/\r?\n/).filter((l) => l.trim());
+    const lines = String(content).split(/\r?\n/).filter((l: any) => l.trim());
     if (lines.length > 0) {
       const year = guessYear(lines[0]);
       return [
@@ -293,7 +293,7 @@ export function parseFileContent(fileName, content) {
  * @param {string} fileName
  * @returns {{title: string, year: string|null, fileName: string}}
  */
-export function metadataFromPdfFileName(fileName) {
+export function metadataFromPdfFileName(fileName: string): {title: string, year: string|null, fileName: string} {
   const base = path.basename(fileName, path.extname(fileName));
   const clean = base.replace(/[_]+/g, " ").replace(/\s+/g, " ").trim();
   const year = guessYear(clean);
@@ -312,9 +312,9 @@ export function metadataFromPdfFileName(fileName) {
 
 /** 从文件读取并解析题录
  * @param {string} filePath
- * @returns {Array<import("./types.js").LiteratureEntry>}
+ * @returns {Array<import("./types.ts").LiteratureEntry>}
  */
-export function parseFile(filePath) {
+export function parseFile(filePath: string): Array<import("./types.ts").LiteratureEntry> {
   try {
     const content = fs.readFileSync(filePath, "utf-8");
     return parseFileContent(path.basename(filePath), content);

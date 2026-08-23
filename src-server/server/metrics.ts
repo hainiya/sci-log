@@ -126,7 +126,7 @@ const SYSTEM_DEFS = [
   { name: '无机/有机复合', aliases: [/杂化/i, /复合/i, /hybrid/i, /composite/i] },
 ];
 
-export const SYSTEM_NAMES = SYSTEM_DEFS.map((s) => s.name);
+export const SYSTEM_NAMES = SYSTEM_DEFS.map((s: any) => s.name);
 
 const UNLABELED = '未标注';
 
@@ -134,16 +134,16 @@ const UNLABELED = '未标注';
  * @param {any} fields fields 数组（[{k,v}]）或对象（{k:v}）
  * @returns {Record<string, string>}
  */
-function normalizeFields(fields) {
+function normalizeFields(fields: any): Record<string, string> {
   if (Array.isArray(fields)) {
-    /** @type {Record<string, string>} */
-    const out = {};
+    
+    const out: Record<string, string> = {};
     for (const f of fields) {
       if (f && typeof f.k === 'string' && f.k.trim()) out[f.k.trim()] = String(f.v ?? '').trim();
     }
     return out;
   }
-  if (fields && typeof fields === 'object') return /** @type {Record<string, string>} */ (fields);
+  if (fields && typeof fields === 'object') return (fields as Record<string, string>);
   return {};
 }
 
@@ -151,7 +151,7 @@ function normalizeFields(fields) {
  * @param {unknown} str
  * @returns {string}
  */
-function normalizeSci(str) {
+function normalizeSci(str: unknown): string {
   return String(str || '')
     .replace(/×\s*10\s*\^/gi, 'e')
     .replace(/[xX]\s*10\s*\^/gi, 'e')
@@ -162,7 +162,7 @@ function normalizeSci(str) {
  * @param {any} entry
  * @returns {{ ts: number, date: string }}
  */
-function entryDate(entry) {
+function entryDate(entry: any): { ts: number, date: string } {
   const raw = entry?.createdAt || entry?.date;
   if (raw) {
     const d = new Date(raw);
@@ -174,7 +174,7 @@ function entryDate(entry) {
 }
 
 /** @param {Date} d @returns {string} */
-function fmtDate(d) {
+function fmtDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -186,7 +186,7 @@ function fmtDate(d) {
  * @param {string} str
  * @returns {{temp: number, unit: string}|null}
  */
-function matchTemp(str) {
+function matchTemp(str: string): {temp: number, unit: string}|null {
   const k = str.match(/(?:^|[^\d.])@?\s*(\d{2,4})\s*°?\s*K\b/i);
   if (k) return { temp: Number(k[1]), unit: 'K' };
   const c = str.match(/(-?\d{1,4})\s*(?:°\s*C|℃)(?![A-Za-z])/i) || str.match(/(-?\d{1,4})\s*摄氏度/i);
@@ -201,7 +201,7 @@ function matchTemp(str) {
  * @param {number|null} atIndex
  * @returns {{temp: number, unit: string}|null}
  */
-function extractTemp(str, atIndex) {
+function extractTemp(str: string, atIndex: number|null): {temp: number, unit: string}|null {
   if (typeof str !== 'string' || !str) return null;
   if (atIndex != null) {
     const lineEndIdx = str.indexOf('\n', atIndex);
@@ -227,7 +227,7 @@ function extractTemp(str, atIndex) {
  * @returns {{value: number, unit: (string|null), raw: string}|null}
  *   unit：换算成功时保留解析到的原始单位串（供 tooltip 溯源）；解析不到单位才是 null（空心点）。
  */
-function parseValueUnit(str, metric, anchor) {
+function parseValueUnit(str: string, metric: any, anchor?: string): { value: number, unit: (string|null), raw: string } | null {
   const raw = String(str ?? '').trim();
   const norm = normalizeSci(raw);
   let numStr = null;
@@ -247,7 +247,7 @@ function parseValueUnit(str, metric, anchor) {
   const num = parseFloat(numStr);
   if (!Number.isFinite(num)) return null;
   const variants = metric?.unitNorm?.variants || {};
-  const keys = Object.keys(variants).sort((a, b) => b.length - a.length);
+  const keys = Object.keys(variants).sort((a: any, b: any) => b.length - a.length);
   for (const k of keys) {
     // IEEE754 长尾规范化（0.8 × 0.1 = 0.08000000000000002 → 0.08）
     if (norm.includes(k)) return { value: Number((num * variants[k]).toPrecision(12)), unit: k, raw };
@@ -259,7 +259,7 @@ function parseValueUnit(str, metric, anchor) {
  * @param {Record<string, string>} fieldsObj
  * @returns {{temp: number, unit: string}|null}
  */
-function recordLevelTemp(fieldsObj) {
+function recordLevelTemp(fieldsObj: Record<string, string>): {temp: number, unit: string}|null {
   for (const [k, v] of Object.entries(fieldsObj || {})) {
     if (!/^(测试温度|温度)$/.test(String(k).trim())) continue;
     const t = extractTemp(String(v ?? ''), null);
@@ -275,7 +275,7 @@ function recordLevelTemp(fieldsObj) {
  * @param {Record<string, string>} fieldsObj
  * @returns {string}
  */
-function detectSystem(entry, fieldsObj) {
+function detectSystem(entry: any, fieldsObj: Record<string, string>): string {
   const explicit = entry?.system;
   if (explicit != null && String(explicit).trim()) return String(explicit).trim();
   const parts = [];
@@ -291,7 +291,7 @@ function detectSystem(entry, fieldsObj) {
   }
   const text = parts.join('\n');
   for (const sys of SYSTEM_DEFS) {
-    if (sys.aliases.some((re) => { re.lastIndex = 0; return re.test(text); })) return sys.name;
+    if (sys.aliases.some((re: any) => { re.lastIndex = 0; return re.test(text); })) return sys.name;
   }
   return UNLABELED;
 }
@@ -300,7 +300,7 @@ function detectSystem(entry, fieldsObj) {
  * @param {RegExpExecArray|null} m
  * @returns {number|null}
  */
-function numFromMatch(m) {
+function numFromMatch(m: RegExpExecArray|null): number|null {
   if (!m) return null;
   for (let i = m.length - 1; i >= 1; i--) {
     const s = m[i];
@@ -313,7 +313,7 @@ function numFromMatch(m) {
 }
 
 /** @param {unknown} str @param {number} max @returns {string} */
-function summarize(str, max) {
+function summarize(str: unknown, max: number): string {
   const s = String(str || '').trim().replace(/\s+/g, ' ');
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
@@ -324,7 +324,7 @@ function summarize(str, max) {
  * @param {string} system
  * @param {any} point
  */
-function pushPoint(series, metric, system, point) {
+function pushPoint(series: Record<string, any>, metric: {key: string, label: string, unit: string}, system: string, point: any) {
   let m = series[metric.key];
   if (!m) {
     m = { key: metric.key, label: metric.label, unit: metric.unit, systems: {}, count: 0 };
@@ -337,14 +337,13 @@ function pushPoint(series, metric, system, point) {
 
 /**
  * 核心：从实验记录构建指标时间序列。
- * @param {import("./types.js").WorklogEntry[]} worklogEntries
- * @param {import("./types.js").LiteratureEntry[]} [literatureEntries]
+ * @param {import("./types.ts").WorklogEntry[]} worklogEntries
+ * @param {import("./types.ts").LiteratureEntry[]} [literatureEntries]
  * @returns {{ ok:true, metrics:Record<string, any>, order:string[], baseline:Record<string, any>,
  *             totals:{entries:number, withMetrics:number, unrecognized:Array<{entryId: string|null, date: string, sampleId: string|null, content: string}>} }}
  */
-export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) {
-  /** @type {Record<string, any>} */
-  const series = {};
+export function buildMetricsSeries(worklogEntries: import("./types.ts").WorklogEntry[] = [], literatureEntries: import("./types.ts").LiteratureEntry[] = []): { ok: true, metrics: Record<string, any>, order: string[], baseline: Record<string, any>, totals: { entries: number, withMetrics: number, unrecognized: Array<{ entryId: string | null, date: string, sampleId: string | null, content: string }> } } {
+  const series: Record<string, any> = {};
   const withMetrics = new Set();
   /** @type {Array<{entryId: (string|null), date: string, sampleId: (string|null), content: string}>} */
   const unrecognized = [];
@@ -358,8 +357,8 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
     const isUnlabeled = system === UNLABELED;
 
     // 去重：同 entryId + 指标 + 温度 + 值 只收一个（fields 与 data 双抽、重复书写均不重复计）
-    /** @type {(metric: any, point: any) => void} */
-    const addPoint = (metric, point) => {
+    
+    const addPoint: (metric: any, point: any) => void = (metric: any, point: any) => {
       const dk = `${e?.id || ''}|${metric.key}|${point.temp ?? ''}|${point.tempUnit ?? ''}|${point.value}`;
       if (seen.has(dk)) return;
       seen.add(dk);
@@ -371,8 +370,8 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
     // ① fields 逐字段判定：白名单 keyRe 命中 → 取数换算（优先于黑名单）；黑名单命中 → 排除；其余字段跳过
     // 直接遍历原始 fields（数组形态保序，同 key 多值不互相覆盖——多温度点全抽的 fields 形态，如两个 ZT 字段）
     const fieldList = Array.isArray(e?.fields)
-      ? e.fields.map((f) => ({ k: String(f?.k ?? '').trim(), v: String(f?.v ?? '').trim() })).filter((f) => f.k && f.v)
-      : Object.entries(fieldsObj).map(([k, v]) => ({ k: k.trim(), v: String(v ?? '').trim() })).filter((f) => f.k && f.v);
+      ? e.fields.map((f: any) => ({ k: String(f?.k ?? '').trim(), v: String(f?.v ?? '').trim() })).filter((f: any) => f.k && f.v)
+      : Object.entries(fieldsObj).map(([k, v]) => ({ k: k.trim(), v: String(v ?? '').trim() })).filter((f: any) => f.k && f.v);
     for (const { k, v } of fieldList) {
       const val = v;
       let hit = null;
@@ -384,7 +383,7 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
       }
       if (hit) {
         // 变化量词排除：字段名含衰减率/变化率等 → 跳过（值不是指标本身）
-        if (CHANGE_WORDS.some((w) => k.includes(w))) {
+        if (CHANGE_WORDS.some((w: any) => k.includes(w))) {
           continue;
         }
         // 传字段名作锚：优先取「ZT=1.2」形态紧邻数值，防描述性前缀数字（823K 时 ZT 1.2）误收
@@ -410,7 +409,7 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
         }
         continue;
       }
-      if (BLACKLIST_KEYS.some((kw) => kw.toLowerCase() === k.toLowerCase())) continue;
+      if (BLACKLIST_KEYS.some((kw: any) => kw.toLowerCase() === k.toLowerCase())) continue;
       // 其余字段：跳过
     }
 
@@ -455,14 +454,14 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
     }
   }
 
-  /** @type {Record<string, any>} */
-  const metrics = {};
+  
+  const metrics: Record<string, any> = {};
   const order = [];
   for (const def of METRIC_DEFS) {
     const m = series[def.key];
     if (!m) continue;
     for (const sys of Object.keys(m.systems)) {
-      /** @type {any[]} */ (m.systems[sys]).sort((a, b) => a.ts - b.ts);
+      (m.systems[sys] as any[]).sort((a: any, b: any) => a.ts - b.ts);
     }
     metrics[def.key] = m;
     order.push(def.key);
@@ -487,12 +486,11 @@ export function buildMetricsSeries(worklogEntries = [], literatureEntries = []) 
  * 从文献库抽取基准值：仅当数值出现在 record/peak/最高 等语境下才计入，
  * 取同指标所有命中中的最大值。保守，避免把正文任意提及的数值当成基准。
  * 顺带抽取基线值的测试温度（@823K / at 823 K / at 650 °C，°C 归一为 K），供面板提示温度可比性。
- * @param {import("./types.js").LiteratureEntry[]} [literatureEntries]
+ * @param {import("./types.ts").LiteratureEntry[]} [literatureEntries]
  * @returns {Record<string, {value: number, temp: (number|null), tempUnit: (string|null)}|null>}
  */
-export function extractLiteratureBaseline(literatureEntries = []) {
-  /** @type {Record<string, {value: number, temp: number|null, tempUnit: string|null}|null>} */
-  const baseline = {};
+export function extractLiteratureBaseline(literatureEntries: import("./types.ts").LiteratureEntry[] = []): Record<string, { value: number, temp: (number|null), tempUnit: (string|null) } | null> {
+  const baseline: Record<string, { value: number, temp: number | null, tempUnit: string | null } | null> = {};
   const RECORD_CTX =
     /最高|记录|record|peak|state[- ]of[- ]the[- ]art|可达|up to|高达|创|突破|最优|benchmark|world/i;
   for (const metric of METRIC_DEFS) {
@@ -533,17 +531,17 @@ export function extractLiteratureBaseline(literatureEntries = []) {
  * @param {{metrics?: object, order?: string[], baseline?: object, totals?: object}} data buildMetricsSeries 的返回值
  * @param {{metric?: string, system?: string, temp?: number, from?: string, to?: string}} [opts]
  */
-export function filterSeries(data, opts = {}) {
+export function filterSeries(data: {metrics?: object, order?: string[], baseline?: object, totals?: object}, opts: {metric?: string, system?: string, temp?: number, from?: string, to?: string}  = {}) {
   const { metric, system, temp, from, to } = opts || {};
-  /** @type {Record<string, any>} */
-  const metrics = {};
+  
+  const metrics: Record<string, any> = {};
   for (const [mk, m] of Object.entries(data?.metrics || {})) {
     if (metric && mk !== metric) continue;
-    /** @type {Record<string, any[]>} */
-    const systems = {};
+    
+    const systems: Record<string, any[]> = {};
     for (const [sk, pts] of Object.entries(m.systems || {})) {
       if (system && sk !== system) continue;
-      const filtered = /** @type {any[]} */ (pts).filter((/** @type {any} */ p) => {
+      const filtered = (pts as any[]).filter((p: any) => {
         if (temp != null && p.temp !== Number(temp)) return false;
         if (from) { const t = new Date(from).getTime(); if (!Number.isNaN(t) && p.ts < t) return false; }
         if (to) { const t = new Date(to).getTime(); if (!Number.isNaN(t) && p.ts > t) return false; }
@@ -553,7 +551,7 @@ export function filterSeries(data, opts = {}) {
     }
     if (Object.keys(systems).length) {
       // count 同步为过滤后点数（原 build 全量 count 在过滤后失真，会误导「样本不足」判断）
-      const count = Object.values(systems).reduce((n, pts) => n + pts.length, 0);
+      const count = Object.values(systems).reduce((n: any, pts: any) => n + pts.length, 0);
       metrics[mk] = { ...m, systems, count };
     }
   }

@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseDraft } from "../src-server/server/worklog-parse.js";
+import { parseDraft } from "../src-server/server/worklog-parse.ts";
 
 test("parseDraft: 合法 JSON 输出被解析为草稿", () => {
   const raw =

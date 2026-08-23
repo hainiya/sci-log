@@ -5,9 +5,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { createStore } from "../server/store.js";
-import { ensureAutoBinding } from "../server/binding.js";
-import { safeName, renderWorklogMarkdown } from "../server/export-util.js";
+import { createStore } from "../server/store.ts";
+import { ensureAutoBinding } from "../server/binding.ts";
+import { safeName, renderWorklogMarkdown } from "../server/export-util.ts";
 
 export const name = "export_report";
 export const description =
@@ -35,10 +35,10 @@ export const sessionPermission = {
 
 /**
  * @param {Record<string, any>} input
- * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @param {import("../server/types.ts").ToolCtx} toolCtx
  * @returns {Promise<any>}
  */
-export async function execute(input = {}, toolCtx) {
+export async function execute(input: Record<string, any>  = {}, toolCtx: import("../server/types.ts").ToolCtx): Promise<any> {
   const sessionRef =
     toolCtx.sessionRef ||
     (toolCtx.sessionId ? { sessionId: toolCtx.sessionId, sessionPath: toolCtx.sessionPath || null } : null);

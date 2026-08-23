@@ -1,4 +1,4 @@
-import { extractFirstJson } from "./json-util.js";
+import { extractFirstJson } from "./json-util.ts";
 
 /**
  * parseDraft —— LLM 输出字符串 → 实验记录草稿对象的纯函数模块。
@@ -15,7 +15,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * @param {number} max
  * @returns {string|null}
  */
-function cleanStr(v, max) {
+function cleanStr(v: unknown, max: number): string|null {
   if (typeof v !== "string") return null;
   const s = v.trim().slice(0, max);
   return s || null;
@@ -25,7 +25,7 @@ function cleanStr(v, max) {
  * @param {unknown} v
  * @returns {number|null}
  */
-function cleanDurationHours(v) {
+function cleanDurationHours(v: unknown): number|null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -46,7 +46,7 @@ function cleanDurationHours(v) {
  *   startDate: string | null,
  * }}
  */
-export function parseDraft(rawText) {
+export function parseDraft(rawText: unknown): null | { content: string, sampleId: string | null, system: string | null, data: string | null, taskId: string | null, durationHours: number | null, startDate: string | null } {
   const raw = String(rawText ?? "").trim();
   if (!raw) return null;
   const json = extractFirstJson(raw);

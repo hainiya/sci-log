@@ -6,8 +6,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { sampleText as hanaSampleText } from "@hana/plugin-runtime";
-import { extractFirstJson } from "./json-util.js";
-import { TriageOutputSchema, ScheduleItemSchema } from "./schemas.js";
+import { extractFirstJson } from "./json-util.ts";
+import { TriageOutputSchema, ScheduleItemSchema } from "./schemas.ts";
 
 const DEFAULT_TIMEOUT = 120000;
 
@@ -16,11 +16,12 @@ const DEFAULT_TIMEOUT = 120000;
  * 自动搜集 / 报告 / 审查 / PDF 摘要共享同一信号量，避免同窗口多路调用互相挤压导致 LLM_TIMEOUT。
  */
 class Semaphore {
-  /** @param {number} limit */
-  constructor(limit) {
+  private limit: number;
+  private active: number;
+  private queue: Array<(value?: unknown) => void>;
+  constructor(limit: number) {
     this.limit = limit;
     this.active = 0;
-    /** @type {Array<(value?: unknown) => void>} */
     this.queue = [];
   }
   acquire() {
@@ -28,7 +29,7 @@ class Semaphore {
       this.active += 1;
       return Promise.resolve();
     }
-    return new Promise((resolve) => this.queue.push(resolve));
+    return new Promise((resolve: any) => this.queue.push(resolve));
   }
   release() {
     this.active = Math.max(0, this.active - 1);
@@ -41,7 +42,7 @@ class Semaphore {
 const LLM_SEM = new Semaphore(2);
 
 /** @param {any[]} messages @returns {number} */
-function estimateTokens(messages) {
+function estimateTokens(messages: any[]): number {
   let chars = 0;
   for (const m of messages || []) {
     chars += typeof m?.content === "string" ? m.content.length : 0;
@@ -50,16 +51,16 @@ function estimateTokens(messages) {
 }
 
 /** @param {unknown} err @returns {boolean} */
-function isTimeoutError(err) {
-  return /timeout/i.test((/** @type {any} */ (err))?.message || (/** @type {any} */ (err))?.cause?.message || (/** @type {any} */ (err))?.code || String(err));
+function isTimeoutError(err: unknown): boolean {
+  return /timeout/i.test(((err as any))?.message || ((err as any))?.cause?.message || ((err as any))?.code || String(err));
 }
 
 /**
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").SampleTextInput} input
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").SampleTextInput} input
  * @returns {Promise<any>}
  */
-export async function sampleText(ctx, input) {
+export async function sampleText(ctx: import("./types.ts").ToolCtx, input: import("./types.ts").SampleTextInput): Promise<any> {
   if (!ctx?.bus?.request) {
     throw new Error("plugin bus request unavailable");
   }
@@ -102,11 +103,11 @@ export async function sampleText(ctx, input) {
 }
 
 /** 读 prompt（缺省空串）
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {string} name
  * @returns {string}
  */
-function readPrompt(ctx, name) {
+function readPrompt(ctx: import("./types.ts").ToolCtx, name: string): string {
   try {
     return fs.readFileSync(path.join(ctx.pluginDir ?? "", "prompts", name), "utf-8");
   } catch {
@@ -115,11 +116,11 @@ function readPrompt(ctx, name) {
 }
 
 /** 从用户消息提取检索关键词（文献自动搜集用）
- * @param {import("./types.js").ToolCtx} ctx
+ * @param {import("./types.ts").ToolCtx} ctx
  * @param {string} text
  * @returns {Promise<string[]>}
  */
-export async function extractKeywords(ctx, text) {
+export async function extractKeywords(ctx: import("./types.ts").ToolCtx, text: string): Promise<string[]> {
   const base = readPrompt(ctx, "keyword-extractor.md");
   const result = await sampleText(ctx, {
     messages: [
@@ -133,23 +134,23 @@ export async function extractKeywords(ctx, text) {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.map((k) => String(k).trim()).filter(Boolean);
+    if (Array.isArray(parsed)) return parsed.map((k: any) => String(k).trim()).filter(Boolean);
   } catch {}
   return raw
     .split(/[,，;；\n]/)
-    .map((k) => k.trim())
+    .map((k: any) => k.trim())
     .filter(Boolean)
     .slice(0, 6);
 }
 
 /**
  * C3：从全文生成 2-3 句摘要（abstract 为空的 Zotero 条目用）
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").LiteratureEntry} entry
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").LiteratureEntry} entry
  * @param {unknown} text
  * @returns {Promise<string|null>}
  */
-export async function summarizeFromFulltext(ctx, entry, text) {
+export async function summarizeFromFulltext(ctx: import("./types.ts").ToolCtx, entry: import("./types.ts").LiteratureEntry, text: unknown): Promise<string|null> {
   const result = await sampleText(ctx, {
     messages: [
       {
@@ -174,12 +175,12 @@ export async function summarizeFromFulltext(ctx, entry, text) {
  * 返回 string[]；失败返回 null（不阻塞增强链路）
  * 命名 extractLiteratureKeywords 而非 extractKeywords：
  * 后者已被 B1 检索关键词提取占用（同名导出在 ES module 中直接 SyntaxError）
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").LiteratureEntry} entry
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").LiteratureEntry} entry
  * @param {unknown} text
  * @returns {Promise<string[]|null>}
  */
-export async function extractLiteratureKeywords(ctx, entry, text) {
+export async function extractLiteratureKeywords(ctx: import("./types.ts").ToolCtx, entry: import("./types.ts").LiteratureEntry, text: unknown): Promise<string[]|null> {
   const out = await sampleText(ctx, {
     callPoint: "extractLiteratureKeywords",
     messages: [
@@ -196,7 +197,7 @@ export async function extractLiteratureKeywords(ctx, entry, text) {
     if (!m) return null;
     const arr = JSON.parse(m[0]);
     if (!Array.isArray(arr)) return null;
-    const kws = arr.map((s) => String(s).trim()).filter(Boolean).slice(0, 5);
+    const kws = arr.map((s: any) => String(s).trim()).filter(Boolean).slice(0, 5);
     return kws.length >= 1 ? kws : null;
   } catch {
     return null;
@@ -205,12 +206,12 @@ export async function extractLiteratureKeywords(ctx, entry, text) {
 
 /**
  * E2：英文摘要 → 中文翻译（材料术语保真，保留原文对照用 abstractEn）
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").LiteratureEntry} entry
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").LiteratureEntry} entry
  * @param {unknown} abstractEn
  * @returns {Promise<string|null>}
  */
-export async function translateAbstract(ctx, entry, abstractEn) {
+export async function translateAbstract(ctx: import("./types.ts").ToolCtx, entry: import("./types.ts").LiteratureEntry, abstractEn: unknown): Promise<string|null> {
   const result = await sampleText(ctx, {
     callPoint: "translateAbstract",
     messages: [
@@ -234,30 +235,30 @@ export async function translateAbstract(ctx, entry, abstractEn) {
 /**
  * 实验记录 AI 巡检：参数结构化 + 文献关联 + 甘特进度推断 + 日程识别 + 方案对比
  * 一次 LLM 调用输出全部结果；解析失败返回 null（不阻塞主流程）
- * @param {import("./types.js").ToolCtx} ctx
- * @param {{ entries: import("./types.js").WorklogEntry[], gantt: import("./types.js").GanttDoc, literature: import("./types.js").LiteratureDoc, today?: string }} input
- * @returns {Promise<import("./types.js").TriageResult|null>}
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {{ entries: import("./types.ts").WorklogEntry[], gantt: import("./types.ts").GanttDoc, literature: import("./types.ts").LiteratureDoc, today?: string }} input
+ * @returns {Promise<import("./types.ts").TriageResult|null>}
  */
-export async function triageWorkEntry(ctx, { entries, gantt, literature, today }) {
+export async function triageWorkEntry(ctx: import("./types.ts").ToolCtx, { entries, gantt, literature, today }: { entries: import("./types.ts").WorklogEntry[], gantt: import("./types.ts").GanttDoc, literature: import("./types.ts").LiteratureDoc, today?: string }): Promise<import("./types.ts").TriageResult | null> {
   const base = readPrompt(ctx, "worklog-triage.md");
   const litList = (literature?.entries || [])
     .slice(-120)
-    .map((e) => ({
+    .map((e: any) => ({
       id: e.id || e.zoteroKey || null,
       zoteroKey: e.zoteroKey || null,
       title: e.title,
       doi: e.doi || null,
       keywords: (e.keywords || []).slice(0, 8),
     }))
-    .filter((e) => e.id);
-  const taskList = (gantt?.tasks || []).map((t) => ({
+    .filter((e: any) => e.id);
+  const taskList = (gantt?.tasks || []).map((t: any) => ({
     id: t.id,
     name: t.name,
     progress: Number(t.progress) || 0,
   }));
   const docs = {
     today: today || new Date().toISOString().slice(0, 10),
-    "实验记录": (entries || []).map((e) => ({
+    "实验记录": (entries || []).map((e: any) => ({
       id: e.id,
       sampleId: e.sampleId || null,
       date: e.date || null,
@@ -290,33 +291,33 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
     return null;
   }
 
-  const taskIds = new Set(taskList.map((t) => t.id));
+  const taskIds = new Set(taskList.map((t: any) => t.id));
   const fields = Array.isArray(parsed?.fields)
-    ? /** @type {any[]} */ (parsed.fields)
-        .filter((f) => f && typeof f.k === "string" && f.k.trim())
+    ? (parsed.fields as any[])
+        .filter((f: any) => f && typeof f.k === "string" && f.k.trim())
         .slice(0, 10)
-        .map((f) => ({ k: f.k.trim(), v: String(f.v ?? "").trim() }))
-        .filter((f) => f.v)
+        .map((f: any) => ({ k: f.k.trim(), v: String(f.v ?? "").trim() }))
+        .filter((f: any) => f.v)
     : [];
   const citations = Array.isArray(parsed?.citations)
-    ? /** @type {any[]} */ (parsed.citations).map((c) => String(c).trim()).filter(Boolean).slice(0, 5)
+    ? (parsed.citations as any[]).map((c: any) => String(c).trim()).filter(Boolean).slice(0, 5)
     : [];
   // 材料体系：记录能明确判断时填标准名，无法判断为空字符串（供提案回填/落库）；限长防自由文本
   const system = typeof parsed?.system === "string" ? parsed.system.trim().slice(0, 50) : "";
   const taskProgress = Array.isArray(parsed?.taskProgress)
-    ? /** @type {any[]} */ (parsed.taskProgress)
-        .filter((tp) => tp && taskIds.has(String(tp.taskId)))
-        .map((tp) => {
+    ? (parsed.taskProgress as any[])
+        .filter((tp: any) => tp && taskIds.has(String(tp.taskId)))
+        .map((tp: any) => {
           const p = Math.min(100, Math.max(0, Number(tp.progress) || 0));
           return { taskId: String(tp.taskId), progress: Math.round(p), reason: String(tp.reason || "").slice(0, 60) };
         })
-        .filter((tp) => tp.reason)
+        .filter((tp: any) => tp.reason)
         .slice(0, 3)
     : [];
   const events = Array.isArray(parsed?.events)
-    ? /** @type {any[]} */ (parsed.events)
-        .filter((ev) => ev && typeof ev.title === "string" && ev.title.trim() && /^\d{4}-\d{2}-\d{2}$/.test(String(ev.date || "")))
-        .map((ev) => ({
+    ? (parsed.events as any[])
+        .filter((ev: any) => ev && typeof ev.title === "string" && ev.title.trim() && /^\d{4}-\d{2}-\d{2}$/.test(String(ev.date || "")))
+        .map((ev: any) => ({
           title: String(ev.title).trim().slice(0, 80),
           date: String(ev.date),
           startTime: typeof ev.startTime === "string" && /^\d{2}:\d{2}$/.test(ev.startTime) ? ev.startTime : null,
@@ -341,7 +342,7 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
   // zod 观测（方案 A）：不改变容错结果，仅对契约漂移记日志，供迭代 prompt / 解析器时发现
   const check = TriageOutputSchema.safeParse(out);
   if (!check.success) {
-    ctx?.log?.warn(`triageWorkEntry: 输出与契约漂移（${check.error.issues.length} 处）：${check.error.issues.map((i) => i.path.join(".") || i.code).join(", ")}`);
+    ctx?.log?.warn(`triageWorkEntry: 输出与契约漂移（${check.error.issues.length} 处）：${check.error.issues.map((i: any) => i.path.join(".") || i.code).join(", ")}`);
   }
   return out;
 }
@@ -349,9 +350,9 @@ export async function triageWorkEntry(ctx, { entries, gantt, literature, today }
 /** 本地时区今天（YYYY-MM-DD），用于 startDate 不晚于今天的保守校验
  * @returns {string}
  */
-function localTodayStr() {
+function localTodayStr(): string {
   const d = new Date();
-  const pad = (/** @type {number} */ n) => String(n).padStart(2, "0");
+  const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
@@ -365,7 +366,7 @@ const SCHEDULE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * @param {number} [maxItems]
  * @returns {Array<{title: string, due: string, type: string, linksTaskId: string|null, reason: string}>}
  */
-function parseScheduleBlock(raw, today, maxItems = 5) {
+function parseScheduleBlock(raw: unknown, today: string, maxItems: number  = 5): Array<{title: string, due: string, type: string, linksTaskId: string|null, reason: string}> {
   const marker = "<!--SCHEDULE-->";
   const idx = String(raw || "").indexOf(marker);
   if (idx === -1) return [];
@@ -376,9 +377,9 @@ function parseScheduleBlock(raw, today, maxItems = 5) {
     const parsed = JSON.parse(json);
     const list = Array.isArray(parsed?.schedule) ? parsed.schedule : [];
     const todayStr = today || new Date().toISOString().slice(0, 10);
-    return /** @type {any[]} */ (list)
+    return (list as any[])
       .filter(
-        (it) =>
+        (it: any) =>
           it &&
           typeof it.title === "string" &&
           it.title.trim() &&
@@ -386,7 +387,7 @@ function parseScheduleBlock(raw, today, maxItems = 5) {
           SCHEDULE_DATE_RE.test(it.due) &&
           it.due >= todayStr // 不得早于今天
       )
-      .map((it) => ({
+      .map((it: any) => ({
         title: String(it.title).trim().slice(0, 40),
         due: String(it.due),
         type: ["experiment", "meeting", "deadline", "other"].includes(it.type) ? it.type : "other",
@@ -403,14 +404,14 @@ function parseScheduleBlock(raw, today, maxItems = 5) {
  * 生成下一步行动建议（log_work 后返回）
  * 上下文含：近期实验记录（含刚记录的新条目）/ 时间表 / 已排日程（避免与已排安排冲突）
  * 返回 { text, schedule }：text 为可读建议；schedule 为可排入日程的结构化意图（P0 闭环用）
- * @param {import("./types.js").ToolCtx} ctx
- * @param {import("./types.js").WorklogDoc} worklog
- * @param {import("./types.js").GanttDoc} gantt
- * @param {import("./types.js").CalendarDoc} calendar
+ * @param {import("./types.ts").ToolCtx} ctx
+ * @param {import("./types.ts").WorklogDoc} worklog
+ * @param {import("./types.ts").GanttDoc} gantt
+ * @param {import("./types.ts").CalendarDoc} calendar
  * @param {string} [today]
- * @returns {Promise<import("./types.js").AdviceResult>}
+ * @returns {Promise<import("./types.ts").AdviceResult>}
  */
-export async function nextStepAdvice(ctx, worklog, gantt, calendar, today) {
+export async function nextStepAdvice(ctx: import("./types.ts").ToolCtx, worklog: import("./types.ts").WorklogDoc, gantt: import("./types.ts").GanttDoc, calendar: import("./types.ts").CalendarDoc, today: string): Promise<import("./types.ts").AdviceResult> {
   const base = readPrompt(ctx, "next-step-advisor.md");
   const docs = {
     worklog: JSON.stringify((worklog?.entries || []).slice(-10), null, 2),
@@ -431,10 +432,10 @@ export async function nextStepAdvice(ctx, worklog, gantt, calendar, today) {
   const raw = String(result?.text || "").trim();
   const text = raw.split("<!--SCHEDULE-->")[0].trim();
   const schedule = parseScheduleBlock(raw, today);
-  const badSchedule = schedule.filter((it) => !ScheduleItemSchema.safeParse(it).success);
+  const badSchedule = schedule.filter((it: any) => !ScheduleItemSchema.safeParse(it).success);
   if (badSchedule.length > 0) {
     ctx?.log?.warn(`nextStepAdvice: ${badSchedule.length} 条日程与契约漂移，已跳过`);
   }
-  return { text, schedule: schedule.filter((it) => ScheduleItemSchema.safeParse(it).success) };
+  return { text, schedule: schedule.filter((it: any) => ScheduleItemSchema.safeParse(it).success) };
 }
 

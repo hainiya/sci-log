@@ -8,7 +8,7 @@
  * - literature.json 追加式写入（append），删除/修改走乐观锁
  * - 保留最近 MAX_SNAPSHOTS 个版本快照，可一键回退
  *
- * @typedef {import("./types.js").StoreApi} StoreApi
+ * @typedef {import("./types.ts").StoreApi} StoreApi
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -16,8 +16,8 @@ import path from "node:path";
 export const MAX_SNAPSHOTS = 20;
 export const LITERATURE_COMPACT_THRESHOLD = 500;
 
-/** @type {Record<string, () => any>} */
-const DEFAULT_DOC = {
+
+const DEFAULT_DOC: Record<string, () => any> = {
   gantt: () => ({ version: 0, tasks: [], updatedAt: null }),
   calendar: () => ({ version: 0, events: [], updatedAt: null }),
   literature: () => ({ version: 0, entries: [], updatedAt: null, lastCompactedAt: null }),
@@ -30,7 +30,7 @@ const DEFAULT_DOC = {
 };
 
 /** @type {Record<string, string>} */
-export const UPDATES_KEYS = {
+export const UPDATES_KEYS: Record<string, string> = {
   gantt: "gantt",
   calendar: "calendar",
   worklog: "worklog",
@@ -41,7 +41,7 @@ export const UPDATES_KEYS = {
  * @param {string} dataDir
  * @param {string} name
  */
-function filePathFor(dataDir, name) {
+function filePathFor(dataDir: string, name: string) {
   return path.join(dataDir, `${name}.json`);
 }
 
@@ -49,7 +49,7 @@ function filePathFor(dataDir, name) {
  * @param {string} dataDir
  * @param {string} name
  */
-function snapshotDirFor(dataDir, name) {
+function snapshotDirFor(dataDir: string, name: string) {
   return path.join(dataDir, "snapshots", name);
 }
 
@@ -57,7 +57,7 @@ function snapshotDirFor(dataDir, name) {
  * @param {string} filePath
  * @param {string} content
  */
-function atomicWrite(filePath, content) {
+function atomicWrite(filePath: string, content: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, content, "utf-8");
@@ -69,11 +69,11 @@ function atomicWrite(filePath, content) {
  * @param {() => any} fallback
  * @returns {any}
  */
-function readJson(filePath, fallback) {
+function readJson(filePath: string, fallback: () => any): any {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch (err) {
-    if (/** @type {NodeJS.ErrnoException} */ (err).code !== "ENOENT") {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       // 损坏文件：备份后重建，保证面板可用
       try {
         fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
@@ -89,45 +89,25 @@ function nowIso() {
 
 /**
  * @param {string} dataDir
- * @returns {StoreApi}
+ * @returns {import("./types.ts").StoreApi}
  */
-export function createStore(dataDir) {
+export function createStore(dataDir: string): import("./types.ts").StoreApi {
   fs.mkdirSync(dataDir, { recursive: true });
 
   /**
    * 读取（含结构兜底与 version 归一化）。
    * 已知文档名返回精确类型；未知名回落 any。
-   * @overload
-   * @param {"gantt"} name
-   * @returns {import("./types.js").GanttDoc}
-   * @overload
-   * @param {"calendar"} name
-   * @returns {import("./types.js").CalendarDoc}
-   * @overload
-   * @param {"worklog"} name
-   * @returns {import("./types.js").WorklogDoc}
-   * @overload
-   * @param {"literature"} name
-   * @returns {import("./types.js").LiteratureDoc}
-   * @overload
-   * @param {"collections"} name
-   * @returns {import("./types.js").CollectionsDoc}
-   * @overload
-   * @param {"binding"} name
-   * @returns {import("./types.js").BindingDoc}
-   * @overload
-   * @param {"updates"} name
-   * @returns {import("./types.js").UpdatesDoc}
-   * @overload
-   * @param {"settings"} name
-   * @returns {import("./types.js").SettingsDoc}
-   * @overload
-   * @param {string} name
-   * @returns {any}
-   * @param {string} name
-   * @returns {any}
    */
-  function read(name) {
+  function read(name: "gantt"): import("./types.ts").GanttDoc;
+  function read(name: "calendar"): import("./types.ts").CalendarDoc;
+  function read(name: "worklog"): import("./types.ts").WorklogDoc;
+  function read(name: "literature"): import("./types.ts").LiteratureDoc;
+  function read(name: "collections"): import("./types.ts").CollectionsDoc;
+  function read(name: "binding"): import("./types.ts").BindingDoc;
+  function read(name: "updates"): import("./types.ts").UpdatesDoc;
+  function read(name: "settings"): import("./types.ts").SettingsDoc;
+  function read(name: string): any;
+  function read(name: string): any {
     const doc = readJson(filePathFor(dataDir, name), DEFAULT_DOC[name]);
     // 结构兜底：新字段缺失时补默认
     const defaults = DEFAULT_DOC[name]();
@@ -144,14 +124,12 @@ export function createStore(dataDir) {
     return merged;
   }
 
-  /** @param {string} name @param {any} data @returns {any} */
-  function write(name, data) {
+  function write(name: string, data: any): any {
     atomicWrite(filePathFor(dataDir, name), `${JSON.stringify(data, null, 2)}\n`);
     return data;
   }
 
-  /** @param {string} name @param {number} version */
-  function snapshot(name, version) {
+  function snapshot(name: string, version: number): void {
     try {
       const doc = read(name);
       const dir = snapshotDirFor(dataDir, name);
@@ -162,19 +140,18 @@ export function createStore(dataDir) {
     }
   }
 
-  /** @param {string} name */
-  function pruneSnapshots(name) {
+  function pruneSnapshots(name: string): void {
     const dir = snapshotDirFor(dataDir, name);
     if (!fs.existsSync(dir)) return;
     /** @type {string[]} */
     let files;
     try {
-      files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+      files = fs.readdirSync(dir).filter((f: any) => f.endsWith(".json"));
     } catch {
       return;
     }
     if (files.length <= MAX_SNAPSHOTS) return;
-    const sorted = files.sort((a, b) => Number(a.split(".")[0]) - Number(b.split(".")[0]));
+    const sorted = files.sort((a: any, b: any) => Number(a.split(".")[0]) - Number(b.split(".")[0]));
     for (const f of sorted.slice(0, files.length - MAX_SNAPSHOTS)) {
       try {
         fs.unlinkSync(path.join(dir, f));
@@ -189,7 +166,7 @@ export function createStore(dataDir) {
    * @param {(cur: any) => Record<string, any>} mutator
    * @returns {{ ok: true, data: any } | { ok: false, error: "version_conflict", data: any }}
    */
-  function update(name, expectedVersion, mutator) {
+  function update(name: string, expectedVersion: number|undefined, mutator: (cur: any) => Record<string, any>): { ok: true, data: any } | { ok: false, error: "version_conflict", data: any } {
     const doc = read(name);
     if (expectedVersion !== undefined && doc.version !== expectedVersion) {
       return { ok: false, error: "version_conflict", data: doc };
@@ -209,13 +186,13 @@ export function createStore(dataDir) {
    * @param {string[]} [dedupeKeys]
    * @returns {{ ok: true, data: any, appended: number }}
    */
-  function append(name, items, dedupeKeys = ["doi", "title"]) {
+  function append(name: string, items: any[], dedupeKeys: string[]  = ["doi", "title"]): { ok: true, data: any, appended: number } {
     if (!Array.isArray(items) || items.length === 0) {
       return { ok: true, data: read(name), appended: 0 };
     }
     const doc = read(name);
     /** @param {any} entry @returns {string[]} */
-    const fingerprintsOf = (entry) => {
+    const fingerprintsOf = (entry: any): string[] => {
       const parts = [];
       for (const key of dedupeKeys) {
         const value = entry[key];
@@ -233,7 +210,7 @@ export function createStore(dataDir) {
     for (const item of items) {
       const fps = fingerprintsOf(item);
       // 任一键（DOI/标题）与已有条目匹配即视为重复
-      if (fps.length > 0 && fps.some((fp) => existingKeys.has(fp))) continue;
+      if (fps.length > 0 && fps.some((fp: any) => existingKeys.has(fp))) continue;
       for (const fp of fps) existingKeys.add(fp);
       fresh.push(item);
     }
@@ -255,8 +232,7 @@ export function createStore(dataDir) {
     return { ok: true, data: next, appended: fresh.length };
   }
 
-  /** 压实：去重 + 重建索引 @param {string} name */
-  function compact(name) {
+  function compact(name: string): void {
     const doc = read(name);
     const seen = new Map();
     const entries = [];
@@ -288,22 +264,22 @@ export function createStore(dataDir) {
    * @param {number} [toVersion]
    * @returns {{ ok: boolean, error?: string, data?: any }}
    */
-  function rollback(name, toVersion) {
+  function rollback(name: string, toVersion?: number): { ok: boolean, error?: string, data?: any } {
     const dir = snapshotDirFor(dataDir, name);
     const target = toVersion !== undefined ? `${toVersion}.json` : null;
-    /** @type {string|null} */
-    let snapshotFile = null;
+    
+    let snapshotFile: string|null = null;
     if (target) {
       const p = path.join(dir, target);
       if (fs.existsSync(p)) snapshotFile = p;
     } else {
-      /** @type {string[]} */
-      let files = [];
+      
+      let files: string[] = [];
       try {
-        files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+        files = fs.readdirSync(dir).filter((f: any) => f.endsWith(".json"));
       } catch {}
       if (files.length > 0) {
-        const latest = files.sort((a, b) => Number(b.split(".")[0]) - Number(a.split(".")[0]))[0];
+        const latest = files.sort((a: any, b: any) => Number(b.split(".")[0]) - Number(a.split(".")[0]))[0];
         snapshotFile = path.join(dir, latest);
       }
     }
@@ -317,23 +293,21 @@ export function createStore(dataDir) {
     return { ok: true, data: next };
   }
 
-  /** @param {string} name @returns {number[]} */
-  function listSnapshots(name) {
+  function listSnapshots(name: string): number[] {
     const dir = snapshotDirFor(dataDir, name);
     if (!fs.existsSync(dir)) return [];
     try {
       return fs
         .readdirSync(dir)
-        .filter((f) => f.endsWith(".json"))
-        .map((f) => Number(f.split(".")[0]))
-        .sort((a, b) => b - a);
+        .filter((f: any) => f.endsWith(".json"))
+        .map((f: any) => Number(f.split(".")[0]))
+        .sort((a: any, b: any) => b - a);
     } catch {
       return [];
     }
   }
 
-  /** 推进水位线 @param {string} name @returns {any} */
-  function bump(name) {
+  function bump(name: string): any {
     const updates = read("updates");
     const key = UPDATES_KEYS[name] || name;
     const next = { ...updates, [key]: (updates[key] || 0) + 1 };
@@ -341,8 +315,7 @@ export function createStore(dataDir) {
     return next;
   }
 
-  /** @param {string} key @param {number} value @returns {any} */
-  function setUpdate(key, value) {
+  function setUpdate(key: string, value: number): any {
     const updates = read("updates");
     const next = { ...updates, [key]: value };
     write("updates", next);
@@ -361,12 +334,12 @@ export function createStore(dataDir) {
    * @param {any[]} [extraKeep]
    * @returns {{ ok: true, data: any, replaced: number }}
    */
-  function upsertByKey(name, keyField, items, extraKeep = []) {
+  function upsertByKey(name: string, keyField: string, items: any[], extraKeep: any[]  = []): { ok: true, data: any, replaced: number } {
     const doc = read(name);
-    /** @type {Array<Record<string, any>>} */
-    const existing = doc.entries || [];
-    const kept = [...existing.filter((e) => !e[keyField]), ...extraKeep];
-    const replaced = items.filter((e) => e[keyField]).length;
+    
+    const existing: Array<Record<string, any>> = doc.entries || [];
+    const kept = [...existing.filter((e: any) => !e[keyField]), ...extraKeep];
+    const replaced = items.filter((e: any) => e[keyField]).length;
     const next = {
       ...doc,
       entries: [...kept, ...items],

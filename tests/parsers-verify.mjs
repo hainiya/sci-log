@@ -1,4 +1,4 @@
-import { parseRis, parseBibtex, metadataFromPdfFileName, extractDoi } from "../src-server/server/parsers.js";
+import { parseRis, parseBibtex, metadataFromPdfFileName, extractDoi } from "../src-server/server/parsers.ts";
 
 const out = [];
 // 1. RIS

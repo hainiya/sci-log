@@ -5,8 +5,8 @@
  * 注：宿主工具加载器仅注册具名导出 execute（plugin-manager.ts _loadTools），
  * 故与 tools/ 下其他工具同构采用 execute(input, toolCtx)，而非 default 导出。
  */
-import { createStore } from "../server/store.js";
-import { buildMetricsSeries, filterSeries } from "../server/metrics.js";
+import { createStore } from "../server/store.ts";
+import { buildMetricsSeries, filterSeries } from "../server/metrics.ts";
 
 export const name = "analyze_metrics";
 export const description =
@@ -33,10 +33,10 @@ export const sessionPermission = {
 
 /**
  * @param {Record<string, any>} input
- * @param {import("../server/types.js").ToolCtx} toolCtx
+ * @param {import("../server/types.ts").ToolCtx} toolCtx
  * @returns {Promise<any>}
  */
-export async function execute(input = {}, toolCtx) {
+export async function execute(input: Record<string, any>  = {}, toolCtx: import("../server/types.ts").ToolCtx): Promise<any> {
   const store = createStore(toolCtx.dataDir);
   const worklog = store.read("worklog");
   const literature = store.read("literature");
