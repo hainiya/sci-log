@@ -74,8 +74,10 @@ export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
   } catch (err) {
     return { ok: false, reason: "store_error", data: { message: err?.message || String(err) } };
   }
-  // 落库成功后触发 AI 巡检（manifest autoTriage 承诺）：fire-and-forget，开关与既有调用点一致
-  const autoTriage = ctx?.config?.get?.("autoTriage") ?? true;
+  // 落库成功后触发 AI 巡检（manifest autoTriage 承诺）：fire-and-forget，开关与既有调用点对齐
+  // （宿主配置优先，回退 settings.json 旧值，与 routes/api.js 的 worklog 写入后巡检一致）
+  const settings = store.read("settings");
+  const autoTriage = ctx?.config?.get?.("autoTriage") ?? settings?.autoTriage ?? true;
   if (autoTriage) {
     triageWorklog(ctx, store).catch((err) => {
       ctx?.log?.warn(`triage after ai worklog commit failed: ${err?.message || err}`);
