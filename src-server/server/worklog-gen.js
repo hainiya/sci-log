@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { sampleText } from "./llm.js";
+import { triageWorklog } from "./triage.js";
 
 export { parseDraft } from "./worklog-parse.js";
 
@@ -62,11 +63,24 @@ export function commitDraft(ctx, store, draft, { sessionPath = null } = {}) {
     sourceSession: sessionPath,
     generatedAt: nowIso,
   };
-  const res = store.update("worklog", undefined, (cur) => ({
-    ...cur,
-    entries: [...(cur.entries || []), entry],
-  }));
-  if (!res?.ok) return { ok: false, reason: "store_update_failed", data: res?.data };
+  // store.update 内部 write(原子写)抛异常时不能让草稿静默丢失：捕获并返回明确失败，
+  // 由 index.js 在收到 ok:false 后保留 _pendingDraft 供用户重试
+  try {
+    const res = store.update("worklog", undefined, (cur) => ({
+      ...cur,
+      entries: [...(cur.entries || []), entry],
+    }));
+    if (!res?.ok) return { ok: false, reason: "store_update_failed", data: res?.data };
+  } catch (err) {
+    return { ok: false, reason: "store_error", data: { message: err?.message || String(err) } };
+  }
+  // 落库成功后触发 AI 巡检（manifest autoTriage 承诺）：fire-and-forget，开关与既有调用点一致
+  const autoTriage = ctx?.config?.get?.("autoTriage") ?? true;
+  if (autoTriage) {
+    triageWorklog(ctx, store).catch((err) => {
+      ctx?.log?.warn(`triage after ai worklog commit failed: ${err?.message || err}`);
+    });
+  }
   return { ok: true, id: entry.id };
 }
 

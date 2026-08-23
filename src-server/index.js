@@ -16,6 +16,7 @@ import { sendSessionMessage } from "@hana/plugin-runtime";
 import { generateDraft, commitDraft } from "./server/worklog-gen.js";
 
 const AUTO_COLLECT_THROTTLE_MS = 10 * 60 * 1000; // 10 分钟节流
+const PENDING_DRAFT_TTL_MS = 30 * 60 * 1000; // 待确认草稿 TTL：超时视为无待确认（走空闲分支）
 
 /**
  * 关键词判定（AI 工作流确认/拒绝）：返回 'confirm' | 'reject' | 'other'。
@@ -138,42 +139,56 @@ export default class MaterialsResearchCopilotPlugin {
     const boundPath = this._boundSessionPath();
     if (!boundPath || !sessionPath || sessionPath !== boundPath) return;
 
+    // 隐私承诺（文件头）：autoCollectEnabled=false 时整体跳过会话监听逻辑——
+    // 不读消息内容、不触发 AI 生成、不做 Zotero 同步（AI 生成与自动收集同受此开关控制）
+    const autoCollect = ctx.config.get?.("autoCollectEnabled") ?? true;
+    if (!autoCollect) return;
+
     const text = String(event?.message?.text || "").trim();
     const genEnabled = ctx.config.get?.("aiWorklogGen") ?? true;
 
-    // 1) 待确认态：先把消息解释为对草稿的确认/拒绝
-    if (this._pendingDraft && genEnabled) {
-      const verdict = matchVerdict(text);
-      if (verdict === "confirm") {
-        const pending = this._pendingDraft;
-        // commitDraft 为同步函数：store 乐观锁冲突等情况返回 { ok:false, reason }
-        const res = commitDraft(ctx, this._store, pending.draft, { sessionPath });
+    // 1) 待确认态（TTL 内）：先把消息解释为对草稿的确认/拒绝
+    if (genEnabled && this._pendingDraft) {
+      if (Date.now() - (this._pendingDraft.ts || 0) >= PENDING_DRAFT_TTL_MS) {
+        // 草稿过期：丢弃，后续消息按空闲态处理
+        ctx.log.info("pending worklog draft expired (>30min), discarded");
         this._pendingDraft = null;
-        await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
-          role: "assistant",
-          text: res.ok ? "已记录 ✅" : `记录失败：${res.reason}`,
-        }).catch((err) => ctx.log.warn("ai worklog notify failed:", err.message));
-      } else if (verdict === "reject") {
-        this._pendingDraft = null;
-        await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
-          role: "assistant",
-          text: "好的，已取消记录。",
-        }).catch((err) => ctx.log.warn("ai worklog notify failed:", err.message));
+      } else {
+        const verdict = matchVerdict(text);
+        if (verdict === "confirm") {
+          const pending = this._pendingDraft;
+          // commitDraft 为同步函数：内部已捕获 store 异常并返回 { ok:false, reason }。
+          // 仅在明确 ok 后才清草稿——失败保留待重试，避免草稿静默丢失
+          const res = commitDraft(ctx, this._store, pending.draft, { sessionPath });
+          if (res.ok) this._pendingDraft = null;
+          await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
+            role: "assistant",
+            text: res.ok ? "已记录 ✅" : `记录失败：${res.reason}`,
+          }).catch((err) => ctx.log.warn("ai worklog notify failed:", err.message));
+          return;
+        }
+        if (verdict === "reject") {
+          this._pendingDraft = null;
+          await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
+            role: "assistant",
+            text: "好的，已取消记录。",
+          }).catch((err) => ctx.log.warn("ai worklog notify failed:", err.message));
+          return;
+        }
+        // 其它消息（verdict=other）：维持待确认（首版忽略，不重总结），但不在此早退——
+        // 继续走下方节流同步，避免用户不复述确认/拒绝词时该会话的 Zotero 节流同步停摆
       }
-      // 其它消息：维持待确认（首版忽略，不重总结）
-      return;
     }
 
-    // 2) 空闲态：原有 autoCollect 节流逻辑
-    const autoCollect = ctx.config.get?.("autoCollectEnabled") ?? true;
-    if (!autoCollect) return;
+    // 2) autoCollect 节流（空闲态与待确认期间的 other 消息共用）
     const now = Date.now();
     if (now - this._state.lastAutoCollectAt < AUTO_COLLECT_THROTTLE_MS) return;
     this._state.lastAutoCollectAt = now;
     if (!text || text.length < 20) return;
 
-    // 3) AI 主导生成：空闲 + 含「记录」关键词 → 异步生成草稿并回发询问（不阻塞消息流）
-    if (genEnabled && text.includes("记录")) {
+    // 3) AI 主导生成：仅空闲态（无有效待确认草稿）+ 含「记录」关键词 → 异步生成草稿并回发询问
+    //    （待确认期间不重复生成，避免覆盖单槽草稿；不阻塞消息流）
+    if (genEnabled && !this._pendingDraft && text.includes("记录")) {
       this._maybeGenerateWorklog(text, sessionPath).catch((err) => {
         ctx.log.warn("ai worklog generate failed:", err.message);
       });
