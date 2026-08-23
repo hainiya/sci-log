@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "sci-log",
   "name": "科研工作",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "科研工作：实验记录中心 + 甘特图/日历 + 指标趋势 + 文献库（Zotero 收纳）",
   "minAppVersion": "0.159.0",
   "trust": "full-access",
