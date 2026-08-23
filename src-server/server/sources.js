@@ -116,7 +116,7 @@ const ZOTERO_ITEM_TYPES = [
 ];
 
 /** Zotero 本地 API 显式 UA：Mozilla 前缀 UA 会被 Zotero 拒绝（实测连接被关闭），必须显式设置 */
-const ZOTERO_UA = "materials-research-copilot/0.2.0";
+const ZOTERO_UA = "sci-log/0.2.0";
 
 /** Zotero fetch 封装：显式 UA + 403 兜底 zotero-allowed-request
  * @param {import("./types.js").ToolCtx} ctx

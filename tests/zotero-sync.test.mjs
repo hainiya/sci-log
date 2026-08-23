@@ -5,7 +5,7 @@
  * 前提：Zotero 桌面客户端运行中且已开启本地 API。
  */
 const BASE = "http://127.0.0.1:23119/api/users/0/items";
-const UA = "materials-research-copilot/0.1.0";
+const UA = "sci-log/0.1.0";
 
 let pass = 0;
 let fail = 0;

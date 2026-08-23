@@ -27,7 +27,7 @@ export const sessionPermission = {
   describeSideEffect: () => ({
     kind: "read",
     summary: "读取实验记录与文献库，构建指标序列并过滤返回，只读不写库",
-    ruleId: "materials-research-copilot-read",
+    ruleId: "sci-log-read",
   }),
 };
 

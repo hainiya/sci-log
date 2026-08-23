@@ -26,7 +26,7 @@ export const sessionPermission = {
   describeSideEffect: () => ({
     kind: "external_side_effect",
     summary: "调用本地 Zotero API 扫描并写入插件文献库",
-    ruleId: "materials-research-copilot-zotero-literature",
+    ruleId: "sci-log-zotero-literature",
   }),
 };
 

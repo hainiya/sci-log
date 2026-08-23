@@ -60,7 +60,7 @@ export const sessionPermission = {
   describeSideEffect: () => ({
     kind: "plugin_output",
     summary: "将工作汇报写入插件实验记录，并直接更新甘特进度（AI 写即生效）",
-    ruleId: "materials-research-copilot-plugin-output",
+    ruleId: "sci-log-plugin-output",
   }),
 };
 

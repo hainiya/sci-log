@@ -40,7 +40,7 @@ export const sessionPermission = {
   describeSideEffect: () => ({
     kind: "plugin_output",
     summary: "直接写入插件甘特图/日历数据（AI 写即生效，无提案确认）",
-    ruleId: "materials-research-copilot-plugin-output",
+    ruleId: "sci-log-plugin-output",
   }),
 };
 

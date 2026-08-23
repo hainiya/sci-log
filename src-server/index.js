@@ -93,7 +93,7 @@ export default class MaterialsResearchCopilotPlugin {
     // ── 内部事件：绑定变化 → 重新加载 ──
     const unsubBinding = ctx.bus?.subscribe(
       () => this._reloadBinding(),
-      { types: ["materials-research-copilot:binding-changed"] }
+      { types: ["sci-log:binding-changed"] }
     );
     register(() => typeof unsubBinding === "function" && unsubBinding());
 
@@ -106,7 +106,7 @@ export default class MaterialsResearchCopilotPlugin {
     this._reloadBinding();
     this._syncZoteroNow(true).catch(() => {}); // 启动后立即同步一次（失败静默，定时器会重试）；同步后跑增强循环（摘要+关键词铺完）
 
-    ctx.log?.info("materials-research-copilot lifecycle loaded");
+    ctx.log?.info("sci-log lifecycle loaded");
   }
 
   async _syncZoteroNow(firstRun = false) {

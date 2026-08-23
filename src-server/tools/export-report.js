@@ -29,7 +29,7 @@ export const sessionPermission = {
   describeSideEffect: () => ({
     kind: "session_file_output",
     summary: "在插件数据目录生成实验记录导出文件并注册为 SessionFile 下载卡片",
-    ruleId: "materials-research-copilot-export-session-file",
+    ruleId: "sci-log-export-session-file",
   }),
 };
 

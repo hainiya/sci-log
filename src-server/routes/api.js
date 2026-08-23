@@ -449,7 +449,7 @@ export default function registerApiRoutes(app, ctx) {
     };
     store.write("binding", next);
     try {
-      ctx.bus?.emit?.({ type: "materials-research-copilot:binding-changed", sessionId }, null);
+      ctx.bus?.emit?.({ type: "sci-log:binding-changed", sessionId }, null);
       ctx.appEvents?.emit("binding-changed", { sessionId });
     } catch {}
     return c.json({ ok: true, binding: next, previous: current });
@@ -464,7 +464,7 @@ export default function registerApiRoutes(app, ctx) {
       source: null,
     });
     try {
-      ctx.bus?.emit?.({ type: "materials-research-copilot:binding-changed", sessionId: null }, null);
+      ctx.bus?.emit?.({ type: "sci-log:binding-changed", sessionId: null }, null);
       ctx.appEvents?.emit("binding-changed", { sessionId: null });
     } catch {}
     return c.json({ ok: true, previous: current });

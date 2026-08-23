@@ -2,7 +2,7 @@
 
 面向材料专业科研的 **AI 科研辅助插件**：以**实验记录为数据主线**，提供甘特图/日历可视化、指标趋势、Zotero 文献收纳，并让 AI 直接读写这些数据。
 
-- 插件 ID：`materials-research-copilot`
+- 插件 ID：`sci-log`
 - 类型：`full`（对话工具 + 生命周期 + 面板 UI）
 - 信任级别：`full-access` · 版本：`0.2.0` · 最低宿主：`0.159.0`
 - 宿主：Hana（openhanako）
@@ -50,7 +50,7 @@
 ## 目录结构
 
 ```
-materials-research-copilot/
+sci-log/
 ├── manifest.json          # 能力声明、configSchema、network、UI surface、dev 场景
 ├── package.json
 ├── vite.config.ts         # 前端构建（输出固定 assets/panel.js|css）

@@ -28,7 +28,7 @@ export function ensureAutoBinding(ctx) {
   };
   store.write("binding", next);
   try {
-    ctx.bus?.emit?.({ type: "materials-research-copilot:binding-changed", sessionId }, null);
+    ctx.bus?.emit?.({ type: "sci-log:binding-changed", sessionId }, null);
   } catch {}
   return next;
 }
