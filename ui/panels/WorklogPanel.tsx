@@ -3,6 +3,7 @@ import { formatLogTime } from '../lib/dates';
 import { newId } from '../lib/ids';
 import { api } from '../api';
 import { ConfirmButton } from '../components/ConfirmButton';
+import { IconFlask, IconEdit, IconDownload, IconPlus } from '../components/Icons';
 
 // 材料体系预设（与 src-server/server/metrics.js SYSTEM_DEFS / 巡检提示词一致，共 11 项；「无机/有机复合」为斜杠分隔）
 const SYSTEM_PRESETS = ['SnSe', 'SnS₂', 'SnS', 'Bi₂Te₃', 'PbSe', 'MnTe', 'Cu₂Se', 'Ag₂Se', 'PEDOT/导电聚合物', '碳材料', '无机/有机复合'];
@@ -254,7 +255,7 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
     <div className="mrc-worklog">
       <div className="mrc-panel-section">
         <button type="button" className="mrc-accordion-head" onClick={() => setShowForm((v) => !v)} title="AI 自动记录为主；需要补充或修改 AI 记错的地方时手动添加">
-          <span className="mrc-section-title">✍️ 手动记录</span>
+          <span className="mrc-section-title"><IconEdit size={14} /> 手动记录</span>
           <span className="mrc-hint">AI 记录为主 · 手动仅补充 / 纠错</span>
           <span className="mrc-accordion-toggle">{showForm ? '收起 ▴' : '展开 ▾'}</span>
         </button>
@@ -330,7 +331,7 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
             {saving ? '保存中…' : '记录本次工作'}
           </button>
           <button className="mrc-btn" onClick={() => setShowImport((v) => !v)} title="粘贴仪器导出的表格，批量导入指标数据">
-            📥 批量导入
+            <IconDownload size={13} /> 批量导入
           </button>
         </div>
         {showImport && (
@@ -356,7 +357,7 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
                 {importPreview.records.map((r: any, i: number) => (
                   <div key={i} className="mrc-import-record">
                     <span className="mrc-import-date">{r.date}</span>
-                    {r.sampleId && <span className="mrc-log-sample">🧪 {r.sampleId}</span>}
+                    {r.sampleId && <span className="mrc-log-sample"><IconFlask size={12} /> {r.sampleId}</span>}
                     {r.system && <span className="mrc-chip mini">{r.system}</span>}
                     <span className="mrc-import-fields">{r.fields.map((f: any) => f.k).join('、')}</span>
                   </div>
@@ -388,9 +389,9 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
 
       <div className="mrc-panel-section">
         <div className="mrc-section-head">
-          <span className="mrc-section-title">🧪 实验记录</span>
+          <span className="mrc-section-title"><IconFlask size={14} /> 实验记录</span>
           <span className="mrc-count">{entries.length}</span>
-          <button className="mrc-btn small primary" onClick={() => setShowForm(true)} title="手动补充 / 批量导入">＋ 记录</button>
+          <button className="mrc-btn small primary" onClick={() => setShowForm(true)} title="手动补充 / 批量导入"><IconPlus size={13} /> 记录</button>
           <input
             className="mrc-worklog-search"
             placeholder="按样品编号 / 内容检索…"
@@ -430,7 +431,7 @@ export function WorklogPanel({ state, onStateChange, showToast, editEntryId, onC
                 <>
                   <div className="mrc-log-head">
                     <span className="mrc-log-date">{formatLogTime(entry)}</span>
-                    {entry.sampleId && <span className="mrc-log-sample" title="样品编号">🧪 {entry.sampleId}</span>}
+                    {entry.sampleId && <span className="mrc-log-sample" title="样品编号"><IconFlask size={12} /> {entry.sampleId}</span>}
                     {entry.system && <span className="mrc-chip mini" title="材料体系">{entry.system}</span>}
                     {entry.taskId && <span className="mrc-log-task">#{entry.taskId}</span>}
                     {entry.editedAt && <span className="mrc-log-edited" title={`编辑于 ${new Date(entry.editedAt).toLocaleString('zh-CN')}`}>已编辑</span>}

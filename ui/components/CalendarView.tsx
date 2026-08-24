@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { fmt } from '../lib/dates';
 import { newId } from '../lib/ids';
+import { IconX } from './Icons';
 
 export type CalendarEvent = {
   id: string;
@@ -117,7 +118,7 @@ export function CalendarView({ events, tasks, onSave, worklogDates = [] }: Props
               {dayEvents.slice(0, 2).map((ev) => (
                 <div key={ev.id} className={`mrc-cal-event type-${ev.type || 'default'}`} title={ev.title}>
                   {ev.startTime ? `${ev.startTime} ` : ''}{ev.title}
-                  <button className="mrc-cal-del" onClick={(e) => { e.stopPropagation(); deleteEvent(ev.id); }}>×</button>
+                  <button className="mrc-cal-del" onClick={(e) => { e.stopPropagation(); deleteEvent(ev.id); }}><IconX size={12} /></button>
                 </div>
               ))}
               {dayEvents.length > 2 && <div className="mrc-cal-more">+{dayEvents.length - 2}</div>}

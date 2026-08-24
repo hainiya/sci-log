@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, hana } from '../api';
+import { IconBook, IconRefresh, IconSparkle, IconFolder, IconDoc, IconX, IconLink, IconDotOn, IconDotOff, IconScan, IconTrash, IconWarning, IconExternal, IconNew } from '../components/Icons';
 
 type Props = {
   state: any;
@@ -183,12 +184,12 @@ export function LiteraturePanel({ state, onStateChange, showToast }: Props) {
     const showEn = absEn && (expanded || !abs);
     if (!abs && !absEn && source !== 'none') return null;
     if (source === 'none' && !abs) {
-      return <p className="mrc-paper-abstract none">⚠️ 暂无摘要（无 PDF 或扫描版），可在 Zotero 中补充后同步。</p>;
+      return <p className="mrc-paper-abstract none"><IconWarning size={12} /> 暂无摘要（无 PDF 或扫描版），可在 Zotero 中补充后同步。</p>;
     }
     const body = showEn ? absEn : abs;
     return (
       <p className={`mrc-paper-abstract ${expanded ? 'expanded' : ''}`}>
-        {isAi && <span className="mrc-ai-badge" title={source === 'ai_translated' ? 'AI 翻译自英文原文' : 'AI 从全文生成'}>✨ AI</span>}
+        {isAi && <span className="mrc-ai-badge" title={source === 'ai_translated' ? 'AI 翻译自英文原文' : 'AI 从全文生成'}><IconSparkle size={11} /> AI</span>}
         {body.slice(0, expanded ? body.length : 200)}
         {!expanded && body.length > 200 ? '…' : ''}
         {(body.length > 200 || absEn) && (
@@ -217,17 +218,18 @@ export function LiteraturePanel({ state, onStateChange, showToast }: Props) {
     <div className="mrc-literature">
       <div className="mrc-panel-section">
         <div className="mrc-section-head">
-          <span className="mrc-section-title">📚 文献库</span>
+          <span className="mrc-section-title"><IconBook size={14} /> 文献库</span>
           <span className="mrc-count">{entries.length}</span>
           <span className={`mrc-zotero-status ${zotero?.ok ? 'ok' : 'off'}`} title={zotero?.ok ? `Zotero 已连接：${zotero.total} 条` : `Zotero 未连接${zotero?.error ? `：${zotero.error}` : ''}`}>
-            {zotero?.ok ? '● Zotero 在线' : '○ Zotero 离线'}
+            {zotero?.ok ? <span className="mrc-dot"><IconDotOn size={13} /></span> : <span className="mrc-dot"><IconDotOff size={13} /></span>}
+            {zotero?.ok ? ' Zotero 在线' : ' Zotero 离线'}
           </span>
           <span className="mrc-head-actions">
             <button className="mrc-btn small" onClick={scanNow} disabled={scanning} title="全量同步：Zotero 镜像">
-              {scanning ? '⏳ 扫描中…' : '🔄 扫描'}
+              {scanning ? '扫描中…' : <><IconRefresh size={13} /> 扫描</>}
             </button>
             <button className="mrc-btn small" onClick={enhancePdfs} disabled={enhanceBusy} title="生成/翻译摘要 + 提取关键词">
-              {enhanceBusy ? '补全中…' : '✨ AI 摘要'}
+              {enhanceBusy ? '补全中…' : <><IconSparkle size={13} /> AI 摘要</>}
             </button>
             {entries.some((e) => e.zoteroGone) &&
               (confirmPurge ? (
@@ -238,7 +240,7 @@ export function LiteraturePanel({ state, onStateChange, showToast }: Props) {
                 </span>
               ) : (
                 <button className="mrc-btn small danger" onClick={() => setConfirmPurge(true)} title="删除 Zotero 中已删除文献的失效镜像">
-                  🗑 清除失效
+                  <IconTrash size={12} /> 清除失效
                 </button>
               ))}
           </span>
@@ -262,7 +264,7 @@ export function LiteraturePanel({ state, onStateChange, showToast }: Props) {
           ))}
           {collCounts.uncategorized > 0 && (
             <button className={`mrc-chip ${filter === 'uncategorized' ? 'active' : ''}`} onClick={() => setFilter('uncategorized')}>
-              🗂 未分类 {collCounts.uncategorized}
+              <IconFolder size={12} /> 未分类 {collCounts.uncategorized}
             </button>
           )}
         </div>
@@ -290,7 +292,7 @@ export function LiteraturePanel({ state, onStateChange, showToast }: Props) {
             <div className="mrc-empty">
               {filter === 'uncategorized'
                 ? '当前没有未分类的 Zotero 文献。可在 Zotero 中为文献建立分类（collection），同步后这里会显示分类树。'
-                : '没有匹配的文献。点击上方「🔄 扫描」或让助手用 collect_literature 搜集。'}
+                : '没有匹配的文献。点击上方「扫描」或让助手用 collect_literature 搜集。'}
             </div>
           )}
           {filtered.map((entry) => {
@@ -302,22 +304,24 @@ export function LiteraturePanel({ state, onStateChange, showToast }: Props) {
                 <div className="mrc-paper-meta">
                   {entry.year ? <span className="mrc-paper-year">{entry.year}</span> : null}
                   {entry.firstSeenAt && Date.now() - new Date(entry.firstSeenAt).getTime() < 7 * 24 * 3600 * 1000 && (
-                    <span className="mrc-paper-new" title="7 天内新入库">🆕</span>
+                    <span className="mrc-paper-new" title="7 天内新入库">
+                  <IconNew size={12} />
+                </span>
                   )}
                   {entry.venue ? <span className="mrc-paper-venue">{entry.venue}</span> : null}
                   <span className="mrc-paper-source src-zotero">
                     {entry.readOnly ? 'Zotero 镜像' : 'Zotero'}
                   </span>
                   {entry.citationCount != null && <span className="mrc-paper-cites">引用 {entry.citationCount}</span>}
-                  {entry.fullTextParsed === 'ok' && <span className="mrc-paper-ft" title="已解析 PDF 全文">📄 全文已解析</span>}
-                  {entry.fullTextParsed === 'scan' && <span className="mrc-paper-ft scan" title="扫描版 PDF，无法提取文本">📄 扫描版需人工补全</span>}
-                  {entry.abstractSource === 'ai_generated' && <span className="mrc-paper-ft" title="AI 从全文生成的摘要">✨ AI 摘要</span>}
-                  {entry.abstractSource === 'ai_translated' && <span className="mrc-paper-ft trans" title="AI 翻译自英文原文">✨ AI 翻译</span>}
-                  {entry.abstractSource === 'none' && <span className="mrc-paper-ft none" title="无 PDF 或无摘要">⚠️ 待补全</span>}
+                  {entry.fullTextParsed === 'ok' && <span className="mrc-paper-ft" title="已解析 PDF 全文"><IconDoc size={12} /> 全文已解析</span>}
+                  {entry.fullTextParsed === 'scan' && <span className="mrc-paper-ft scan" title="扫描版 PDF，无法提取文本"><IconDoc size={12} /> 扫描版需人工补全</span>}
+                  {entry.abstractSource === 'ai_generated' && <span className="mrc-paper-ft" title="AI 从全文生成的摘要"><IconSparkle size={12} /> AI 摘要</span>}
+                  {entry.abstractSource === 'ai_translated' && <span className="mrc-paper-ft trans" title="AI 翻译自英文原文"><IconSparkle size={12} /> AI 翻译</span>}
+                  {entry.abstractSource === 'none' && <span className="mrc-paper-ft none" title="无 PDF 或无摘要"><IconWarning size={12} /> 待补全</span>}
                 </div>
                 {Array.isArray(entry.keywords) && entry.keywords.length > 0 && (
                   <div className="mrc-paper-keywords" title={entry.keywordsSource === 'ai' ? 'AI 提取的关键词' : undefined}>
-                    {entry.keywordsSource === 'ai' && <span className="mrc-ai-badge">✨</span>}
+                    {entry.keywordsSource === 'ai' && <span className="mrc-ai-badge"><IconSparkle size={11} /></span>}
                     <span>关键词：{entry.keywords.join(' · ')}</span>
                   </div>
                 )}
@@ -333,16 +337,16 @@ export function LiteraturePanel({ state, onStateChange, showToast }: Props) {
                         <button className="mrc-btn small" disabled={purgeBusy} onClick={() => setRemoveId(null)}>取消</button>
                       </span>
                     ) : (
-                      <button className="mrc-btn small danger" onClick={() => setRemoveId(entry.id)} title="从文献库移除该条目（Zotero 镜像不受影响）">✕ 移除</button>
+                      <button className="mrc-btn small danger" onClick={() => setRemoveId(entry.id)} title="从文献库移除该条目（Zotero 镜像不受影响）"><IconX size={12} /> 移除</button>
                     ))}
                   {entry.zoteroKey && (
                     <button className="mrc-btn small" title={`在 Zotero 中定位该条目（key: ${entry.zoteroKey}）`} onClick={() => openInZotero(entry)}>
-                      🔗 Zotero
+                      <IconLink size={12} /> Zotero
                     </button>
                   )}
                   {entry.doi && <span className="mrc-paper-doi">DOI: {entry.doi}</span>}
                   {entry.url && /^https?:\/\//i.test(entry.url) && (
-                    <a className="mrc-paper-link" href="#" onClick={(e) => { e.preventDefault(); void hana.external.open(entry.url); }}>链接 ↗</a>
+                    <a className="mrc-paper-link" href="#" onClick={(e) => { e.preventDefault(); void hana.external.open(entry.url); }}>链接 <IconExternal size={11} /></a>
                   )}
                 </div>
               </article>

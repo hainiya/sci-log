@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { api } from '../api';
 import { todayStr } from '../lib/dates';
+import { IconCalendar, IconPin, IconClock } from './Icons';
 
 type Props = {
   state: any;
@@ -60,7 +61,7 @@ export function Dashboard({ state, onStateChange, showToast, onGoSchedule, compa
         tasks: tasks.map((t) => (t.id === id ? { ...t, progress: 100 } : t)),
       });
       await onStateChange();
-      showToast('任务已完成 🎉');
+      showToast('任务已完成');
     } catch (err: any) {
       showToast(err.message.includes('version_conflict') ? '数据已被更新，已刷新' : `保存失败：${err.message}`, { error: true });
       await onStateChange();
@@ -72,7 +73,7 @@ export function Dashboard({ state, onStateChange, showToast, onGoSchedule, compa
     return (
       <div className="mrc-dashboard mrc-dash-compact">
         <div className="mrc-dash-card mrc-dash-week">
-          <div className="mrc-dash-title">🗓️ 本周</div>
+          <div className="mrc-dash-title"><IconCalendar size={14} /> 本周</div>
           <div className="mrc-dash-week-grid">
             <div><b>{week.workCount ?? 0}</b><span>实验记录</span></div>
             <div><b>{week.litCount ?? 0}</b><span>文献新增</span></div>
@@ -90,7 +91,7 @@ export function Dashboard({ state, onStateChange, showToast, onGoSchedule, compa
   return (
     <div className="mrc-dashboard">
       <div className="mrc-dash-card mrc-dash-today">
-        <div className="mrc-dash-title">📌 今日任务 <span className="mrc-count">{todayTasks.length}</span></div>
+        <div className="mrc-dash-title"><IconPin size={14} /> 今日任务 <span className="mrc-count">{todayTasks.length}</span></div>
         {todayTasks.length === 0 && <div className="mrc-dash-empty">今天没有进行中的任务</div>}
         {todayTasks.slice(0, 4).map((t) => (
           <div key={t.id} className="mrc-dash-task">
@@ -103,7 +104,7 @@ export function Dashboard({ state, onStateChange, showToast, onGoSchedule, compa
       </div>
 
       <div className="mrc-dash-card">
-        <div className="mrc-dash-title">⏰ 临期 / 今日日程</div>
+        <div className="mrc-dash-title"><IconClock size={14} /> 临期 / 今日日程</div>
         {dueSoon.length === 0 && todayEvents.length === 0 && <div className="mrc-dash-empty">7 天内没有到期的任务</div>}
         {dueSoon.slice(0, 3).map(({ task, daysLeft }) => (
           <div key={task.id} className="mrc-dash-line" title={`${task.start} ~ ${task.end}`}>
@@ -121,7 +122,7 @@ export function Dashboard({ state, onStateChange, showToast, onGoSchedule, compa
       </div>
 
       <div className="mrc-dash-card mrc-dash-week">
-        <div className="mrc-dash-title">🗓️ 本周</div>
+        <div className="mrc-dash-title"><IconCalendar size={14} /> 本周</div>
         <div className="mrc-dash-week-grid">
           <div><b>{week.workCount ?? 0}</b><span>实验记录</span></div>
           <div><b>{week.litCount ?? 0}</b><span>文献新增</span></div>

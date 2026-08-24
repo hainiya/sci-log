@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { IconGear, IconX, IconBook, IconDotOn, IconDotOff, IconLink, IconSearch, IconBot } from '../components/Icons';
 
 type Props = {
   state: any;
@@ -72,27 +73,27 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
     <div className="mrc-drawer-mask" onClick={onClose}>
       <div className="mrc-drawer" onClick={(e) => e.stopPropagation()}>
         <div className="mrc-drawer-head">
-          <span>⚙️ 设置</span>
-          <button className="mrc-btn small" onClick={onClose}>✕</button>
+          <span><IconGear size={15} /> 设置</span>
+          <button className="mrc-btn small" onClick={onClose}><IconX size={14} /></button>
         </div>
 
         <section className="mrc-drawer-section">
-          <h4>📚 Zotero 连接</h4>
+          <h4><IconBook size={14} /> Zotero 连接</h4>
           <p className="mrc-drawer-hint">Zotero 本地库以只读镜像同步进文献库。</p>
           {zotero?.ok ? (
             <div className="mrc-folder-row">
-              <span>🟢 已连接（{zotero.total ?? 0} 条）</span>
+              <span><IconDotOn size={14} /> 已连接（{zotero.total ?? 0} 条）</span>
             </div>
           ) : (
             <div className="mrc-folder-row">
-              <span className="mrc-zotero-error">🔴 未连接：{zotero?.error || '未知状态'}</span>
+              <span className="mrc-zotero-error"><IconDotOff size={14} /> 未连接：{zotero?.error || '未知状态'}</span>
             </div>
           )}
           <button className="mrc-btn small" onClick={reprobeZotero} disabled={probing}>{probing ? '探测中…' : '重试探测'}</button>
         </section>
 
         <section className="mrc-drawer-section">
-          <h4>🔗 会话绑定管理</h4>
+          <h4><IconLink size={14} /> 会话绑定管理</h4>
           <p className="mrc-drawer-hint">绑定后，lifecycle 会监听该会话的用户消息并节流同步 Zotero 本地库（受 autoCollectEnabled 开关控制）。</p>
           {binding?.sessionId ? (
             <div className="mrc-folder-row">
@@ -108,7 +109,7 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
         </section>
 
         <section className="mrc-drawer-section">
-          <h4>🔍 检索设置</h4>
+          <h4><IconSearch size={14} /> 检索设置</h4>
           <p className="mrc-drawer-hint">Zotero 收纳相关的时间过滤默认窗口。</p>
           <div className="mrc-folder-row">
             <span>默认检索窗口</span>
@@ -126,7 +127,7 @@ export function SettingsDrawer({ state, onClose, onStateChange, showToast }: Pro
         </section>
 
         <section className="mrc-drawer-section">
-          <h4>🤖 AI 巡检</h4>
+          <h4><IconBot size={14} /> AI 巡检</h4>
           <p className="mrc-drawer-hint">每次实验记录写入后自动 AI 巡检（参数结构化/文献关联/甘特进度/日程/时长提取），直接写库。关闭后仍可手动巡检。</p>
           <label className="mrc-switch-row">
             <input

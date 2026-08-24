@@ -619,3 +619,42 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 .mrc-schedule.mrc-schedule-stacked { grid-template-columns: 1fr; }
 .mrc-task-panel { max-height: 300px; }
 .mrc-task-panel .mrc-tasklist { max-height: 220px; }
+
+/* ===== 极简线条图标对齐：让 SVG 与文字垂直居中 ===== */
+.mrc-btn,
+.mrc-btn.small,
+.mrc-section-title,
+.mrc-drawer-head span,
+.mrc-drawer-section h4,
+.mrc-main-tab,
+.mrc-dash-title,
+.mrc-paper-ft,
+.mrc-paper-ft.trans,
+.mrc-paper-ft.none,
+.mrc-paper-ft.scan,
+.mrc-paper-new,
+.mrc-ai-badge,
+.mrc-head-actions .mrc-btn,
+.mrc-paper-actions .mrc-btn,
+.mrc-log-sample,
+.mrc-zotero-status,
+.mrc-inline-confirm .mrc-btn,
+.mrc-cal-del,
+.mrc-metrics-warn-item,
+.mrc-metrics-warn-meta,
+.mrc-paper-link,
+.mrc-empty {
+  display: inline-flex;
+  align-items: center;
+}
+.mrc-btn, .mrc-btn.small, .mrc-head-actions .mrc-btn, .mrc-paper-actions .mrc-btn, .mrc-inline-confirm .mrc-btn { gap: 5px; }
+.mrc-section-title, .mrc-drawer-section h4, .mrc-dash-title { gap: 6px; }
+.mrc-main-tab { gap: 6px; }
+.mrc-paper-ft, .mrc-paper-ft.trans, .mrc-paper-ft.none, .mrc-paper-ft.scan, .mrc-paper-new, .mrc-ai-badge, .mrc-log-sample { gap: 4px; }
+.mrc-cal-del { justify-content: center; }
+/* 图标容器：flex 子项居中 */
+.mrc-main-tab svg, .mrc-btn svg, .mrc-section-title svg, .mrc-drawer-section h4 svg, .mrc-dash-title svg, .mrc-paper-ft svg, .mrc-paper-new svg, .mrc-ai-badge svg, .mrc-log-sample svg, .mrc-cal-del svg, .mrc-metrics-warn-item svg, .mrc-metrics-warn-meta svg, .mrc-paper-link svg {
+  flex: 0 0 auto;
+  display: block;
+  line-height: 0;
+}

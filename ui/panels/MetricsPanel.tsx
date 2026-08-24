@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { MetricsChart, MetricSeries, MetricPoint, PALETTE } from '../components/MetricsChart';
+import { IconFlask, IconChevronDown, IconChevronRight, IconChevronUp, IconWarning } from '../components/Icons';
 
 type Props = {
   state: any;
@@ -23,8 +24,8 @@ function UnrecognizedWarnBar({ count, items, open, onToggle, onEdit }: { count: 
   return (
     <div className="mrc-metrics-warn">
       <button type="button" className="mrc-metrics-warn-head" onClick={onToggle}>
-        <span>⚠️ {count} 条实验记录未识别材料体系</span>
-        <span className="mrc-metrics-warn-toggle">{open ? '收起 ▾' : '查看 ▸'}</span>
+        <span><IconWarning size={14} /> {count} 条实验记录未识别材料体系</span>
+        <span className="mrc-metrics-warn-toggle">{open ? <IconChevronUp size={13} /> : <IconChevronRight size={13} />}{open ? ' 收起' : ' 查看'}</span>
       </button>
       {open && (
         <div className="mrc-metrics-warn-list">
@@ -32,7 +33,7 @@ function UnrecognizedWarnBar({ count, items, open, onToggle, onEdit }: { count: 
             <div key={u.entryId || i} className="mrc-metrics-warn-item">
               <span className="mrc-metrics-warn-meta">
                 {u.date}
-                {u.sampleId ? ` · 🧪 ${u.sampleId}` : ''}
+                {u.sampleId && <> · <IconFlask size={11} /> {u.sampleId}</>}
               </span>
               <span className="mrc-metrics-warn-content">{u.content || '（无摘要）'}</span>
               <button
@@ -350,12 +351,12 @@ export function MetricsPanel({ state, onStateChange, showToast, onEditWorklog }:
                         } ${pts.length > 1 && pts[pts.length - 1].value < pts[0].value ? 'down' : ''}`}
                       >
                         {pts.length > 1
-                          ? (pts[pts.length - 1].value > pts[0].value
-                              ? '▲ '
+                          ? ((pts[pts.length - 1].value > pts[0].value
+                              ? '▲'
                               : pts[pts.length - 1].value < pts[0].value
                                 ? '▼ '
                                 : '— ') +
-                            Math.abs(pts[pts.length - 1].value - pts[0].value).toFixed(2)
+                            Math.abs(pts[pts.length - 1].value - pts[0].value).toFixed(2))
                           : '—'}
                       </span>
                       <span className="mrc-metric-sub">

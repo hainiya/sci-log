@@ -10,16 +10,17 @@ import { SchedulePanel } from './panels/SchedulePanel';
 import { MetricsPanel } from './panels/MetricsPanel';
 import { SettingsDrawer } from './settings/SettingsDrawer';
 import { Dashboard } from './components/Dashboard';
+import { IconCalendar, IconFlask, IconChart, IconBook, IconRefresh, IconGear } from './components/Icons';
 
 const POLL_INTERVAL_MS = 15_000;
 
 type MainTab = 'schedule' | 'worklog' | 'metrics' | 'literature';
 
-const TABS: { key: MainTab; label: string }[] = [
-  { key: 'schedule', label: '📅 日程' },
-  { key: 'worklog', label: '🧪 实验记录' },
-  { key: 'metrics', label: '📈 指标趋势' },
-  { key: 'literature', label: '📚 文献库' },
+const TABS: { key: MainTab; label: string; icon: ReactNode }[] = [
+  { key: 'schedule', label: '日程', icon: <IconCalendar size={15} /> },
+  { key: 'worklog', label: '实验记录', icon: <IconFlask size={15} /> },
+  { key: 'metrics', label: '指标趋势', icon: <IconChart size={15} /> },
+  { key: 'literature', label: '文献库', icon: <IconBook size={15} /> },
 ];
 
 /** 渲染期错误兜底：React 19 无 error boundary 时渲染错误会卸载整个 root（白屏且不可恢复） */
@@ -103,7 +104,7 @@ function Panel() {
       <div className="mrc-app" data-surface={surface}>
         <header className="mrc-header">
           <div className="mrc-header-title">
-            <span className="mrc-logo">🧪</span>
+            <span className="mrc-logo"><IconFlask size={17} /></span>
             <span>科研工作</span>
             <span className="mrc-binding">
               {state?.binding?.sessionId ? (
@@ -115,9 +116,9 @@ function Panel() {
           </div>
           <div className="mrc-header-actions">
             <button className="mrc-btn" onClick={loadState} disabled={loading} title="手动刷新数据">
-              {loading ? '…' : '🔄'}
+              {loading ? '…' : <IconRefresh size={14} />}
             </button>
-            <button className="mrc-btn" onClick={() => setSettingsOpen(true)}>⚙️ 设置</button>
+            <button className="mrc-btn" onClick={() => setSettingsOpen(true)}><IconGear size={14} /> 设置</button>
           </div>
         </header>
 
@@ -149,7 +150,7 @@ function Panel() {
             <nav className="mrc-main-tabs">
               {TABS.map((t) => (
                 <button key={t.key} className={`mrc-main-tab ${tab === t.key ? 'active' : ''}`} onClick={() => goTab(t.key)}>
-                  {t.label}
+                  {t.icon}{t.label}
                 </button>
               ))}
             </nav>
