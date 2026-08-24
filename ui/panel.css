@@ -538,9 +538,10 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 .mrc-main-tab { gap: 6px; }
 .mrc-paper-ft, .mrc-paper-ft.trans, .mrc-paper-ft.none, .mrc-paper-ft.scan, .mrc-paper-new, .mrc-ai-badge, .mrc-log-sample { gap: 4px; }
 .mrc-cal-del { justify-content: center; }
-/* 图标容器：flex 子项居中 */
+/* 图标容器：flex 子项居中 + 垂直对齐兜底（修图标偏上） */
 .mrc-main-tab svg, .mrc-btn svg, .mrc-section-title svg, .mrc-dash-title svg, .mrc-paper-ft svg, .mrc-paper-new svg, .mrc-ai-badge svg, .mrc-log-sample svg, .mrc-cal-del svg, .mrc-metrics-warn-item svg, .mrc-metrics-warn-meta svg, .mrc-paper-link svg {
   flex: 0 0 auto;
-  display: block;
+  display: inline-block;
+  vertical-align: middle;
   line-height: 0;
 }
