@@ -193,6 +193,8 @@ npm run build          # 两者
 npm run typecheck      # TypeScript 检查
 ```
 
+**`@hana/*` 依赖来源**：`package.json` 中 `@hana/plugin-*` 指向 `../openhanako/packages/*`（openhanako 源码树）。构建/安装前需将 [liliMozi/openhanako](https://github.com/liliMozi/openhanako) 克隆到**上一级目录**（与 `sci-log` 同级的 `openhanako/`）。
+
 **后端改动必须改 `src-server/`**；构建仅在 `build:server` 后把 `src-server/` 打包到插件根。
 
 ---

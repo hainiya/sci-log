@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@hana/plugin-components": "file:./vendor/openhanako/packages/plugin-components",
-    "@hana/plugin-protocol": "file:./vendor/openhanako/packages/plugin-protocol",
-    "@hana/plugin-runtime": "file:./vendor/openhanako/packages/plugin-runtime",
-    "@hana/plugin-sdk": "file:./vendor/openhanako/packages/plugin-sdk",
+    "@hana/plugin-components": "file:../openhanako/packages/plugin-components",
+    "@hana/plugin-protocol": "file:../openhanako/packages/plugin-protocol",
+    "@hana/plugin-runtime": "file:../openhanako/packages/plugin-runtime",
+    "@hana/plugin-sdk": "file:../openhanako/packages/plugin-sdk",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "zod": "^3.25.0"
