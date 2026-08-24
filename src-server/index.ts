@@ -1,57 +1,18 @@
 /**
  * 材料科研副驾 lifecycle（index.js）
- * - 会话事件：订阅绑定会话的用户消息；空闲时节流触发本地 Zotero 同步（autoCollectEnabled 控制），
- *   消息含「记录」时 AI 生成实验记录草稿并回发会话询问（aiWorklogGen 控制，回复确认词落库/拒绝词丢弃）
+ * - 会话事件：订阅绑定会话的用户消息；空闲时节流触发本地 Zotero 同步（autoCollectEnabled 控制）。
+ * - 实验记录确认流程已改为「AI 编排 + 交互式卡片」：AI 用 prepare_worklog 取草稿，cast 确认卡，
+ *   卡片按钮经 data-card-manifest 绑 commit_worklog / cancel_worklog 落库/取消。
+ *   后台不再维护 matchVerdict/_pendingDraft 文本确认状态机（见 tools/prepare-worklog、commit-worklog、cancel-worklog）。
  * - 后台 Zotero 同步：30 分钟定时全量镜像，同步时自动日志化新收录到 worklog
  * - 隐私：autoCollectEnabled=false 时跳过会话监听逻辑，不触发不检索
- *
- * 实验记录中心化改造后：删除后台分析报告更新（_maybeAutoReport）、定期审查（_maybeAutoReview）、
- * 滞后再平衡（_maybeRebalance）；autoCollect 改为绑定会话后自动同步 Zotero 本地库（不再在线检索）。
  *
  * 宿主约定：本模块被宿主 new 实例化，ctx/register 通过属性注入，onload() 无参调用。
  */
 import { createStore } from "./server/store.ts";
 import { syncZotero, runEnhancementLoop, enrichCitationCounts } from "./server/sources.ts";
-import { sendSessionMessage } from "@hana/plugin-runtime";
-import { generateDraft, commitDraft } from "./server/worklog-gen.ts";
 
 const AUTO_COLLECT_THROTTLE_MS = 10 * 60 * 1000; // 10 分钟节流
-const PENDING_DRAFT_TTL_MS = 30 * 60 * 1000; // 待确认草稿 TTL：超时视为无待确认（走空闲分支）
-
-/**
- * 关键词判定（AI 工作流确认/拒绝）：返回 'confirm' | 'reject' | 'other'。
- * 忽略大小写与首尾空白，整词相等或前缀匹配；拒绝词优先判定（“不用”/“不要”以「不」开头）。
- * @param {unknown} text
- * @returns {"confirm"|"reject"|"other"}
- */
-function matchVerdict(text: unknown): "confirm"|"reject"|"other" {
-  const s = String(text || "").trim().toLowerCase();
-  if (!s) return "other";
-  const rejectWords = ["不", "不用", "不要", "算了", "取消", "no"];
-  const confirmWords = ["记录", "好", "是", "确认", "ok"];
-  if (rejectWords.some((w: any) => s === w || s.startsWith(w))) return "reject";
-  if (confirmWords.some((w: any) => s === w || s.startsWith(w))) return "confirm";
-  return "other";
-}
-
-/**
- * 构造 sendSessionMessage 的会话目标：{ sessionId, sessionPath }，sessionId 优先
- * （取自 event 携带的 sessionId，缺失时回退到绑定信息）；sessionPath 是 legacy locator，
- * 仅作兼容兜底一并带上（宿主要求对已有 session 的操作必须携带 sessionId/sessionRef）。
- */
-/**
- * @param {any} event
- * @param {string|null|undefined} sessionPath
- * @param {string|null} [fallbackSessionId]
- * @returns {{sessionId?: string, sessionPath: string|null}}
- */
-function buildSessionTarget(event: any, sessionPath: string|null|undefined, fallbackSessionId: string|null  = null): {sessionId?: string, sessionPath: string|null} {
-  const trimmed = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-  const sessionId = trimmed(event?.sessionId) || trimmed(fallbackSessionId) || null;
-  return sessionId
-    ? { sessionId, sessionPath: sessionPath || null }
-    : { sessionPath: sessionPath || null };
-}
 
 export default class MaterialsResearchCopilotPlugin {
   /** @type {import("./server/types.ts").ToolCtx} */
@@ -62,8 +23,6 @@ export default class MaterialsResearchCopilotPlugin {
   _store = (undefined as any);
   /** @type {{binding: import("./server/types.ts").BindingDoc|null, lastAutoCollectAt: number}} */
   _state = (undefined as any);
-  /** @type {{draft: any, sessionPath: string|null, ts: number}|null} */
-  _pendingDraft = (undefined as any);
 
   async onload() {
     const ctx = this.ctx;
@@ -73,7 +32,6 @@ export default class MaterialsResearchCopilotPlugin {
       binding: null,
       lastAutoCollectAt: 0,
     };
-    this._pendingDraft = null; // AI 主导生成：待确认草稿（内存态，{ draft, sessionPath, ts }）
 
     // ── 会话事件（用户消息 → AI 记录状态机 / 节流同步 Zotero 本地库） ──
     // 注意：bus.subscribe 返回的句柄 / setInterval 返回的 Timeout 都含循环引用（_idlePrev/_idleNext），
@@ -134,7 +92,6 @@ export default class MaterialsResearchCopilotPlugin {
 
   async onunload() {
     this._state.binding = null;
-    this._pendingDraft = null;
   }
 
   // ── 会话绑定 ──────────────────────────────────────────────
@@ -151,7 +108,7 @@ export default class MaterialsResearchCopilotPlugin {
     return this._state.binding?.sessionPath || null;
   }
 
-  // ── 会话事件：AI 记录状态机 + 节流同步 Zotero 本地库 ──────────
+  // ── 会话事件：节流同步 Zotero 本地库 ──────────
 
   /**
    * @param {any} event
@@ -167,96 +124,13 @@ export default class MaterialsResearchCopilotPlugin {
     const autoCollect = ctx.config?.get?.("autoCollectEnabled") ?? true;
     if (!autoCollect) return;
 
-    const text = String(event?.message?.text || "").trim();
-    const genEnabled = ctx.config?.get?.("aiWorklogGen") ?? true;
-
-    // 1) 待确认态（TTL 内）：先把消息解释为对草稿的确认/拒绝
-    if (genEnabled && this._pendingDraft) {
-      if (Date.now() - (this._pendingDraft.ts || 0) >= PENDING_DRAFT_TTL_MS) {
-        // 草稿过期：丢弃，后续消息按空闲态处理
-        ctx.log?.info("pending worklog draft expired (>30min), discarded");
-        this._pendingDraft = null;
-      } else {
-        const verdict = matchVerdict(text);
-        if (verdict === "confirm") {
-          const pending = this._pendingDraft;
-          // commitDraft 为同步函数：内部已捕获 store 异常并返回 { ok:false, reason }。
-          // 仅在明确 ok 后才清草稿——失败保留待重试，避免草稿静默丢失
-          const res = commitDraft(ctx, this._store, pending.draft, { sessionPath });
-          if (res.ok) this._pendingDraft = null;
-          await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
-            role: "assistant",
-            text: res.ok ? "已记录 ✅" : `记录失败：${res.reason}`,
-          }).catch((err: any) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
-          return;
-        }
-        if (verdict === "reject") {
-          this._pendingDraft = null;
-          await sendSessionMessage(ctx, buildSessionTarget(event, sessionPath, this._state.binding?.sessionId), {
-            role: "assistant",
-            text: "好的，已取消记录。",
-          }).catch((err: any) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
-          return;
-        }
-        // 其它消息（verdict=other）：维持待确认（首版忽略，不重总结），但不在此早退——
-        // 继续走下方节流同步，避免用户不复述确认/拒绝词时该会话的 Zotero 节流同步停摆
-      }
-    }
-
-    // 2) autoCollect 节流（空闲态与待确认期间的 other 消息共用）
+    // autoCollect 节流（仅 Zotero 节流同步；AI 记录确认已迁至交互式卡片，不再在此解析确认词）
     const now = Date.now();
     if (now - this._state.lastAutoCollectAt < AUTO_COLLECT_THROTTLE_MS) return;
     this._state.lastAutoCollectAt = now;
-    if (!text || text.length < 20) return;
 
-    // 3) AI 主导生成：仅空闲态（无有效待确认草稿）+ 含「记录」关键词 → 异步生成草稿并回发询问
-    //    （待确认期间不重复生成，避免覆盖单槽草稿；不阻塞消息流）
-    if (genEnabled && !this._pendingDraft && text.includes("记录")) {
-      this._maybeGenerateWorklog(text, sessionPath).catch((err: any) => {
-        ctx.log?.warn("ai worklog generate failed:", err instanceof Error ? err.message : String(err));
-      });
-    }
-
-    // 原有 Zotero 本地库同步
     this._syncZoteroNow().catch((err: any) => {
       ctx.log?.warn("auto zotero sync failed:", err instanceof Error ? err.message : String(err));
     });
-  }
-
-  /** 生成实验记录草稿并向会话询问确认（fire-and-forget 的可等待实现）。
-   * @param {string} text
-   * @param {string|null|undefined} sessionPath
-   */
-  async _maybeGenerateWorklog(text: string, sessionPath: string | null | undefined) {
-    const ctx = this.ctx;
-    /** @type {Array<{id: string, name: string}>} */
-    let taskList = [];
-    try {
-      // 甘特任务提示：让 LLM 能把 taskId 关联到已有甘特任务（store.read 自带默认兜底 { tasks: [] }）
-      taskList = (this._store.read("gantt")?.tasks || []).map((t: any) => ({ id: t.id, name: t.name }));
-    } catch {}
-
-    // prompt 缺失/输入为空/LLM 失败或无法解析时返回 null；抛错则由调用方 .catch 记日志
-    const draft = (await generateDraft(ctx, { text, taskList }) as any);
-    if (!draft) {
-      await sendSessionMessage(ctx, buildSessionTarget(null, sessionPath, this._state.binding?.sessionId), {
-        role: "assistant",
-        text: "没能从这条消息识别出可记录的实验内容，稍后再试。",
-      }).catch((err: any) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
-      return;
-    }
-
-    // 设为待确认（单槽：同一时刻至多一个待确认草稿；发送失败仅记日志，草稿保留，用户下条回复仍可确认）
-    this._pendingDraft = { draft, sessionPath: sessionPath ?? null, ts: Date.now() };
-    const summary = [
-      draft.sampleId ? `样品：${draft.sampleId}` : null,
-      draft.system ? `体系：${draft.system}` : null,
-      draft.durationHours ? `时长：${draft.durationHours}h` : null,
-      `内容：${draft.content.slice(0, 120)}`, // parseDraft 保证 content 为非空字符串
-    ].filter(Boolean).join("\n");
-    await sendSessionMessage(ctx, buildSessionTarget(null, sessionPath, this._state.binding?.sessionId), {
-      role: "assistant",
-      text: `检测到实验记录草稿：\n${summary}\n\n回复「记录」确认，回复「不」取消。`,
-    }).catch((err: any) => ctx.log?.warn("ai worklog notify failed:", err instanceof Error ? err.message : String(err)));
   }
 }
