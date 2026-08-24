@@ -4,7 +4,7 @@
 
 - 插件 ID：`sci-log`
 - 类型：`full`（对话工具 + 生命周期 + 面板 UI）
-- 信任级别：`full-access` · 版本：`1.0.0` · 最低宿主：`0.159.0`
+- 信任级别：`full-access` · 版本：`1.1.0` · 最低宿主：`0.159.0`
 - 宿主：Hana（openhanako）
 
 > **设计主线**：实验记录中心化。AI 主要承担实验记录的**记录与巡检**，用户主要是**审校与补充**——AI 写操作**直接落库**（乐观锁防并发覆盖），不再有"提案-确认"环节。面板首屏是"已记录的实验记录"，手动记录仅作为纠错入口。
@@ -19,8 +19,7 @@
 | 日历 | 日程 tab | 月视图日程；有实验记录的日期叠加绿色圆点标记 |
 | 实验记录 | 主 Tab | 时间线记录列表 + 手动记录（默认折叠）+ AI 巡检（参数结构化/文献关联/甘特进度/日程/时长提取，直接写库）|
 | 指标趋势 | Tab | 从实验记录提取性能参数（ZT/功率因子/σ/Seebeck/κ/载流子浓度/迁移率…）绘制趋势，叠加文献基准与目标值；温度筛选与单位未标注空心点 |
-| 文献库 | Tab | Zotero 本地扫描收纳、分类/搜索/排序、AI 摘要/翻译/关键词、失效镜像清除 |
-| 设置抽屉 | 右上角 | Zotero 连接 / 会话绑定 / 检索窗口 / AI 巡检开关 |
+| 文献库 | Tab | Zotero 本地扫描收纳、分类/搜索/排序、AI 摘要/翻译/关键词、失效镜像清除；顶部内嵌 Zotero 在线/离线状态 |
 
 **panel（页面）与 widget（窄条）** 两种输出面：widget 只保留最有信息量的"本周统计 + 今日状态行"，避免与页面重复。
 
@@ -135,12 +134,9 @@ sci-log/
 | `literature/enhance-pdfs` | POST | 触发 AI 摘要/关键词增强链路 |
 | `worklog/import` | POST | 仪器表格批量导入 |
 | `scan` | POST | Zotero 扫描 |
-| `binding` | GET / POST / DELETE | 会话绑定管理 |
-| `settings/metrics` `settings/auto-triage` | POST | 配置保存 |
-| `settings/search-window` | POST | **遗留配置**（在线检索已移除，`saveSearchWindow` 保留但不再驱动核心流程）|
+| `settings/metrics` | POST | 指标目标值配置 |
 | `metrics/series` | GET | 指标序列（供指标面板）|
 | `sources/zotero` | GET | Zotero 连接状态 |
-| `sources/zotero/probe` | POST | 重新探测 |
 | `export/<type>` | GET | 导出（`worklog` 等）|
 | `snapshots/<name>/rollback` | POST | 版本回退 |
 
@@ -175,9 +171,7 @@ sci-log/
 |---|---|---|
 | `zoteroPort` | 23119 | Zotero 本地 API 端口（Zotero 7+ 且客户端运行；全文提取/AI 摘要需 10+）|
 | `autoCollectEnabled` | 开 | 绑定会话后用户消息触发自动同步 Zotero |
-| `autoApproveLiterature` | 开 | 新增文献直接入库（AI 写即生效；删除/修改仍受只读镜像保护）|
 | `autoTriage` | 开 | 实验记录写入后自动 AI 巡检，直接写库 |
-| `aiWorklogGen` | 开 | 会话消息含「记录」时 AI 生成草稿（需回复确认）|
 
 外部 HTTP 通过 `ctx.network.fetch()`，宿主在 manifest 中用 `network.allowedHosts` / `methods` / `defaultTimeoutMs` / `maxResponseBytes` 约束（含 `localhost`，`allowLocalhost`）。
 

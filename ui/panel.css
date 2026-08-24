@@ -21,23 +21,8 @@
   color: var(--mrc-text);
   background: var(--mrc-bg);
   min-height: 100%;
+  padding-top: 6px;
 }
-
-/* 头部 */
-.mrc-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--mrc-border);
-}
-.mrc-header-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.mrc-logo { font-size: 18px; }
-.mrc-binding { margin-left: 6px; }
-.mrc-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 400; }
-.mrc-badge.ok { background: rgba(46, 158, 91, 0.15); color: var(--mrc-ok); }
-.mrc-badge.warn { background: rgba(224, 138, 60, 0.18); color: var(--mrc-accent); }
-.mrc-header-actions { display: flex; gap: 6px; }
 
 /* 按钮与输入 */
 .mrc-btn {
@@ -378,33 +363,6 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 .mrc-loading { padding: 40px; text-align: center; color: var(--mrc-text-dim); }
 .mrc-error { padding: 10px; color: var(--mrc-danger); display: flex; gap: 8px; align-items: center; }
 
-/* 设置抽屉 */
-.mrc-drawer-mask {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35);
-  z-index: 50; display: flex; justify-content: flex-end;
-}
-.mrc-drawer {
-  width: min(420px, 92vw); height: 100%;
-  background: var(--mrc-bg-solid);
-  border-left: 1px solid var(--mrc-border);
-  padding: 14px; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 12px;
-}
-.mrc-drawer-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
-.mrc-drawer-section { display: flex; flex-direction: column; gap: 8px; }
-.mrc-drawer-section h4 { margin: 0; font-size: 13px; }
-.mrc-drawer-hint { font-size: 11px; color: var(--mrc-text-dim); margin: 0; line-height: 1.5; }
-.mrc-switch-row { display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer; }
-.mrc-switch-row input { accent-color: var(--mrc-accent); }
-.mrc-folder-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  border: 1px solid var(--mrc-border); border-radius: 6px; padding: 6px 8px; font-size: 12px;
-}
-.mrc-zotero-error { color: var(--mrc-danger); }
-.mrc-rejected-row { border: 1px solid var(--mrc-border); border-radius: 6px; padding: 6px 8px; }
-.mrc-rejected-summary { font-size: 11.5px; }
-.mrc-rejected-reason { font-size: 11px; color: var(--mrc-text-dim); margin-top: 2px; }
-
 /* 报告 Markdown 渲染 */
 .mrc-markdown { font-size: 12px; line-height: 1.55; }
 .mrc-markdown .mrc-md-h1 { font-size: 15px; font-weight: 700; margin: 10px 0 4px; }
@@ -458,7 +416,6 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 }
 @media (max-width: 760px) {
   .mrc-dashboard { grid-template-columns: 1fr; }
-  .mrc-header { flex-wrap: wrap; }
   .mrc-literature-list { max-height: 300px; }
   .mrc-list, .mrc-tasklist { max-height: 220px; }
 }
@@ -506,7 +463,6 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 .mrc-metric-delta.down { color: #ef4444; }
 .mrc-metric-sub { color: var(--mrc-text-dim); font-size: 12px; margin-left: auto; }
 .mrc-metric-target { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; font-size: 13px; color: var(--mrc-text); }
-.mrc-year-input { width: 64px; text-align: center; }
 .mrc-metric-target input { width: 120px; }
 .mrc-metric-baseline { color: var(--mrc-text-dim); font-size: 12px; }
 .mrc-metrics code { background: var(--mrc-bg-card); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -624,8 +580,6 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 .mrc-btn,
 .mrc-btn.small,
 .mrc-section-title,
-.mrc-drawer-head span,
-.mrc-drawer-section h4,
 .mrc-main-tab,
 .mrc-dash-title,
 .mrc-paper-ft,
@@ -648,12 +602,12 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
   align-items: center;
 }
 .mrc-btn, .mrc-btn.small, .mrc-head-actions .mrc-btn, .mrc-paper-actions .mrc-btn, .mrc-inline-confirm .mrc-btn { gap: 5px; }
-.mrc-section-title, .mrc-drawer-section h4, .mrc-dash-title { gap: 6px; }
+.mrc-section-title, .mrc-dash-title { gap: 6px; }
 .mrc-main-tab { gap: 6px; }
 .mrc-paper-ft, .mrc-paper-ft.trans, .mrc-paper-ft.none, .mrc-paper-ft.scan, .mrc-paper-new, .mrc-ai-badge, .mrc-log-sample { gap: 4px; }
 .mrc-cal-del { justify-content: center; }
 /* 图标容器：flex 子项居中 */
-.mrc-main-tab svg, .mrc-btn svg, .mrc-section-title svg, .mrc-drawer-section h4 svg, .mrc-dash-title svg, .mrc-paper-ft svg, .mrc-paper-new svg, .mrc-ai-badge svg, .mrc-log-sample svg, .mrc-cal-del svg, .mrc-metrics-warn-item svg, .mrc-metrics-warn-meta svg, .mrc-paper-link svg {
+.mrc-main-tab svg, .mrc-btn svg, .mrc-section-title svg, .mrc-dash-title svg, .mrc-paper-ft svg, .mrc-paper-new svg, .mrc-ai-badge svg, .mrc-log-sample svg, .mrc-cal-del svg, .mrc-metrics-warn-item svg, .mrc-metrics-warn-meta svg, .mrc-paper-link svg {
   flex: 0 0 auto;
   display: block;
   line-height: 0;

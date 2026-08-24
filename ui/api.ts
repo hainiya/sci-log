@@ -41,34 +41,13 @@ export const api = {
     }),
   scan: () => request<any>('scan', { method: 'POST' }),
   zoteroStatus: () => request<any>('sources/zotero'),
-  reprobeZotero: () => request<any>('sources/zotero/probe', { method: 'POST' }),
   enhancePdfs: () => request<{ ok: boolean }>('literature/enhance-pdfs', { method: 'POST' }),
-  getBinding: () => request<any>('binding'),
-  bind: (sessionId: string, sessionPath: string | null) =>
-    request<any>('binding', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, sessionPath, source: 'manual' }),
-    }),
-  unbind: () => request<any>('binding', { method: 'DELETE' }),
   getMetrics: () => request<any>('metrics/series'),
   saveMetricTargets: (targets: Record<string, number | null>) =>
     request<any>('settings/metrics', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ targets }),
-    }),
-  saveSearchWindow: (years: number) =>
-    request<any>('settings/search-window', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ years }),
-    }),
-  saveAutoTriage: (enabled: boolean) =>
-    request<{ ok: boolean; autoTriage: boolean }>('settings/auto-triage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
     }),
   importWorklog: (text: string, dryRun?: boolean) =>
     request<any>('worklog/import', {

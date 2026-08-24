@@ -17,9 +17,6 @@ import {
   WorklogImportBodySchema,
   LiteratureAppendBodySchema,
   SettingsMetricsBodySchema,
-  BindingBodySchema,
-  AutoTriageBodySchema,
-  SearchWindowBodySchema,
 } from "../server/schemas.ts";
 
 const WRITABLE = new Set(["worklog", "gantt", "calendar", "literature"]);
@@ -55,7 +52,6 @@ export default function registerApiRoutes(app: any, ctx: import("../server/types
     state.updates = store.getUpdates();
     state.config = {
       autoCollectEnabled: ctx.config?.get?.("autoCollectEnabled") ?? true,
-      autoApproveLiterature: ctx.config?.get?.("autoApproveLiterature") ?? true,
       zoteroPort: ctx.config?.get?.("zoteroPort") ?? 23119,
       // autoTriage 迁入宿主配置（技术栈复审）：宿主优先，回退 settings.json 旧值兼容迁移
       autoTriage: ctx.config?.get?.("autoTriage") ?? state.settings?.autoTriage ?? true,
@@ -337,14 +333,7 @@ export default function registerApiRoutes(app: any, ctx: import("../server/types
     return c.json({ port, ...probe });
   });
 
-  // 手动重试探测（绕过节流缓存）
-  app.post("/sources/zotero/probe", async (c: any) => {
-    const port = ctx.config?.get?.("zoteroPort") ?? 23119;
-    const probe = await zoteroProbe(ctx, port);
-    zoteroProbeCache = { at: Date.now(), result: probe };
-    return c.json({ port, ...probe });
-  });
-
+  // 手动重试探测已随设置抽屉移除；连接状态由文献库面板经 GET /sources/zotero 展示，扫描走 POST /scan
   // ── P1：指标时间线（从实验记录抽取性能数值，按体系/时间分组） ──
   app.get("/metrics/series", (c: any) => {
     const worklog = store.read("worklog");
@@ -379,95 +368,6 @@ export default function registerApiRoutes(app: any, ctx: import("../server/types
     }
     const next = writeSettings(ctx, store, { metricTargets: clean });
     return c.json({ ok: true, metricTargets: next.metricTargets || {} });
-  });
-
-  // ── 设置抽屉：检索年份窗口（默认近 N 年，在线检索/自动搜集共用） ──
-  app.post("/settings/search-window", async (c: any) => {
-    /** @type {Record<string, any>} */
-    let body;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "invalid_json" }, 400);
-    }
-    const bodyCheck = SearchWindowBodySchema.safeParse(body ?? {});
-    if (!bodyCheck.success) {
-      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
-    }
-    const years = Number(bodyCheck.data.years);
-    if (!Number.isInteger(years) || years < 1 || years > 30) {
-      return c.json({ error: "invalid_years", message: "年份窗口需为 1-30 的整数" }, 400);
-    }
-    writeSettings(ctx, store, { searchYearWindow: years });
-    return c.json({ ok: true, searchYearWindow: years });
-  });
-
-  // ── 设置抽屉：实验记录自动巡检开关（autoTriage，默认 true）──
-  // 仅控制「写入后自动巡检」；手动 force 巡检（POST /worklog/triage）不受开关限制
-  app.post("/settings/auto-triage", async (c: any) => {
-    
-    let body: Record<string, any> = {};
-    try { body = await c.req.json(); } catch {}
-    const bodyCheck = AutoTriageBodySchema.safeParse(body ?? {});
-    if (!bodyCheck.success) {
-      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
-    }
-    const enabled = bodyCheck.data.enabled === true;
-    try {
-      ctx.config?.set?.("autoTriage", enabled);
-    } catch (err) {
-      ctx.log?.warn?.(`auto-triage config set failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return c.json({ ok: true, autoTriage: enabled });
-  });
-
-  // ── 设置抽屉：会话绑定管理 ────────────────────────────────
-  app.get("/binding", (c: any) => c.json(store.read("binding")));
-
-  app.post("/binding", async (c: any) => {
-    /** @type {Record<string, any>} */
-    let body;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "invalid_json" }, 400);
-    }
-    const bodyCheck = BindingBodySchema.safeParse(body ?? {});
-    if (!bodyCheck.success) {
-      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
-    }
-    const { sessionId, sessionPath, source = "manual" } = bodyCheck.data;
-    if (!sessionId) {
-      return c.json({ error: "missing_sessionId" }, 400);
-    }
-    const current = store.read("binding");
-    const next = {
-      sessionId,
-      sessionPath: sessionPath || null,
-      boundAt: store.now(),
-      source,
-    };
-    store.write("binding", next);
-    try {
-      ctx.bus?.emit?.({ type: "sci-log:binding-changed", sessionId }, null);
-      ctx.appEvents?.emit("binding-changed", { sessionId });
-    } catch {}
-    return c.json({ ok: true, binding: next, previous: current });
-  });
-
-  app.delete("/binding", (c: any) => {
-    const current = store.read("binding");
-    store.write("binding", {
-      sessionId: null,
-      sessionPath: null,
-      boundAt: null,
-      source: null,
-    });
-    try {
-      ctx.bus?.emit?.({ type: "sci-log:binding-changed", sessionId: null }, null);
-      ctx.appEvents?.emit("binding-changed", { sessionId: null });
-    } catch {}
-    return c.json({ ok: true, previous: current });
   });
 
   // ── 快照/回退 ─────────────────────────────────────────────

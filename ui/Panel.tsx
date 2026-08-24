@@ -8,9 +8,8 @@ import { LiteraturePanel } from './panels/LiteraturePanel';
 import { WorklogPanel } from './panels/WorklogPanel';
 import { SchedulePanel } from './panels/SchedulePanel';
 import { MetricsPanel } from './panels/MetricsPanel';
-import { SettingsDrawer } from './settings/SettingsDrawer';
 import { Dashboard } from './components/Dashboard';
-import { IconCalendar, IconFlask, IconChart, IconBook, IconRefresh, IconGear } from './components/Icons';
+import { IconCalendar, IconFlask, IconChart, IconBook } from './components/Icons';
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -54,7 +53,6 @@ function Panel() {
   const [since, setSince] = useState<Record<string, number>>({});
   const [tab, setTab] = useState<MainTab>('schedule');
   const [pendingEditEntryId, setPendingEditEntryId] = useState<string | null>(null); // 跨 tab 补标注：待打开编辑弹窗的 worklog 条目 id
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 宿主原生 toast（@hana/plugin-sdk hana.toast.show）：替代自建 DOM toast
   const showToast = (message: string, opts?: { error?: boolean }) => {
@@ -93,7 +91,8 @@ function Panel() {
   useEffect(() => {
     loadState();
     hana.ready();
-    hana.ui.resize({ height: surface === 'widget' ? 420 : 780 });
+    // 无宿主全屏/无边框开关：页面尽力撑满可用屏幕高度（顶部标题栏为宿主 chrome，无法移除）；widget 保持精简高度
+    hana.ui.resize(surface === 'widget' ? { height: 420 } : { height: window.screen.availHeight });
   }, [surface]);
 
   const goTab = (t: MainTab) => setTab(t);
@@ -102,25 +101,6 @@ function Panel() {
     <div className="mrc-panel">
       <HanaThemeProvider mode="inherit">
       <div className="mrc-app" data-surface={surface}>
-        <header className="mrc-header">
-          <div className="mrc-header-title">
-            <span className="mrc-logo"><IconFlask size={17} /></span>
-            <span>科研工作</span>
-            <span className="mrc-binding">
-              {state?.binding?.sessionId ? (
-                <span className="mrc-badge ok">已绑定会话</span>
-              ) : (
-                <span className="mrc-badge warn" title="绑定后会话中的讨论会自动触发 Zotero 同步；面板导出也依赖绑定">未绑定会话</span>
-              )}
-            </span>
-          </div>
-          <div className="mrc-header-actions">
-            <button className="mrc-btn" onClick={loadState} disabled={loading} title="手动刷新数据">
-              {loading ? '…' : <IconRefresh size={14} />}
-            </button>
-            <button className="mrc-btn" onClick={() => setSettingsOpen(true)}><IconGear size={14} /> 设置</button>
-          </div>
-        </header>
 
         {error && <div className="mrc-error">加载失败：{error} <button className="mrc-btn" onClick={loadState}>重试</button></div>}
 
@@ -177,15 +157,6 @@ function Panel() {
               {tab === 'literature' && <LiteraturePanel state={state} onStateChange={loadState} showToast={showToast} />}
             </main>
           </>
-        )}
-
-        {settingsOpen && (
-          <SettingsDrawer
-            state={state}
-            onClose={() => setSettingsOpen(false)}
-            onStateChange={loadState}
-            showToast={showToast}
-          />
         )}
       </div>
       </HanaThemeProvider>

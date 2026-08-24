@@ -30,7 +30,7 @@ describe('Dashboard', () => {
     render(<Dashboard state={makeState()} onStateChange={vi.fn()} showToast={vi.fn()} onGoSchedule={vi.fn()} />);
     expect(screen.getByText(/今日任务/)).toBeInTheDocument();
     expect(screen.getAllByText('合成实验').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('🗓️ 本周')).toBeInTheDocument();
+    expect(screen.getByText('本周')).toBeInTheDocument();
   });
 
   it('勾选今日任务 → api.write(gantt,...) 标为完成', async () => {
@@ -44,7 +44,7 @@ describe('Dashboard', () => {
 
   it('compact（widget）视图只渲染本周统计 + 今日状态行', () => {
     render(<Dashboard state={makeState()} onStateChange={vi.fn()} showToast={vi.fn()} onGoSchedule={vi.fn()} compact />);
-    expect(screen.getByText('🗓️ 本周')).toBeInTheDocument();
+    expect(screen.getByText('本周')).toBeInTheDocument();
     expect(screen.getByText(/今日 1 项进行中/)).toBeInTheDocument();
     expect(screen.queryByText('今日任务')).not.toBeInTheDocument();
   });
