@@ -8,11 +8,7 @@ import {
   ScheduleItemSchema,
   OpenAlexWorkSchema,
   WorklogImportBodySchema,
-  LiteratureAppendBodySchema,
   SettingsMetricsBodySchema,
-  BindingBodySchema,
-  AutoTriageBodySchema,
-  SearchWindowBodySchema,
 } from '../src-server/server/schemas.ts';
 
 console.log("== zod 边界 schema 测试 ==");
@@ -26,40 +22,10 @@ console.log("== zod 边界 schema 测试 ==");
 }
 
 {
-  const ok = LiteratureAppendBodySchema.safeParse({ entries: [{ title: "x", doi: "10.1/a" }] });
-  assert(ok.success, "literature/append：entries 数组应通过");
-  const bad = LiteratureAppendBodySchema.safeParse({ entries: "not-array" });
-  assert(!bad.success, "literature/append：entries 非数组应拒绝");
-}
-
-{
   const ok = SettingsMetricsBodySchema.safeParse({ targets: { zt: 1.2, pf: null } });
   assert(ok.success, "settings/metrics：任意键值对象应通过");
   const bad = SettingsMetricsBodySchema.safeParse({ targets: "x" });
   assert(!bad.success, "settings/metrics：targets 非对象应拒绝");
-}
-
-{
-  const ok = BindingBodySchema.safeParse({ sessionId: "s1", sessionPath: null, source: "manual" });
-  assert(ok.success, "binding：合法 body 应通过");
-  const bad = BindingBodySchema.safeParse({ sessionId: 42 });
-  assert(!bad.success, "binding：sessionId 非字符串应拒绝");
-  const missing = BindingBodySchema.safeParse({});
-  assert(!missing.success, "binding：缺 sessionId 应拒绝");
-}
-
-{
-  const ok = AutoTriageBodySchema.safeParse({ enabled: true });
-  assert(ok.success, "auto-triage：合法 body 应通过");
-  const bad = AutoTriageBodySchema.safeParse({ enabled: "yes" });
-  assert(!bad.success, "auto-triage：enabled 非布尔应拒绝");
-}
-
-{
-  const ok = SearchWindowBodySchema.safeParse({ years: 5 });
-  assert(ok.success, "search-window：years 数字应通过（范围校验在路由内）");
-  const bad = SearchWindowBodySchema.safeParse({ years: [] });
-  assert(!bad.success, "search-window：years 数组应拒绝");
 }
 
 // ── LLM 输出：合法形态接受（字段可缺省） ──

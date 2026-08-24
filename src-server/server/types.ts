@@ -238,7 +238,6 @@ export interface StoreApi {
   listSnapshots: (name: string) => number[];
   /** 推进水位线 */
   bump: (name: string) => any;
-  setUpdate: (key: string, value: number) => any;
   getUpdates: () => any;
   /** 当前 ISO 时间 */
   now: () => string;

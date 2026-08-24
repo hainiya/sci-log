@@ -12,12 +12,7 @@
  * @typedef {import("zod").infer<typeof ScheduleItemSchema>} ScheduleItem
  * @typedef {import("zod").infer<typeof OpenAlexWorkSchema>} OpenAlexWork
  * @typedef {import("zod").infer<typeof WorklogImportBodySchema>} WorklogImportBody
- * @typedef {import("zod").infer<typeof LiteratureAppendBodySchema>} LiteratureAppendBody
  * @typedef {import("zod").infer<typeof SettingsMetricsBodySchema>} SettingsMetricsBody
- * @typedef {import("zod").infer<typeof BindingBodySchema>} BindingBody
- * @typedef {import("zod").infer<typeof AutoTriageBodySchema>} AutoTriageBody
- * @typedef {import("zod").infer<typeof SearchWindowBodySchema>} SearchWindowBody
- * @typedef {import("zod").infer<typeof TriageForceBodySchema>} TriageForceBody
  */
 import { z } from "zod";
 
@@ -69,28 +64,6 @@ export const WorklogImportBodySchema = z.object({
   dryRun: z.boolean().optional(),
 });
 
-export const LiteratureAppendBodySchema = z.object({
-  entries: z.array(z.record(z.unknown())),
-});
-
 export const SettingsMetricsBodySchema = z.object({
   targets: z.record(z.unknown()),
-});
-
-export const BindingBodySchema = z.object({
-  sessionId: z.string(),
-  sessionPath: z.string().nullable().optional(),
-  source: z.string().optional(),
-});
-
-export const AutoTriageBodySchema = z.object({
-  enabled: z.boolean().optional(),
-});
-
-export const SearchWindowBodySchema = z.object({
-  years: z.union([z.number(), z.string()]).optional(),
-});
-
-export const TriageForceBodySchema = z.object({
-  force: z.boolean().optional(),
 });

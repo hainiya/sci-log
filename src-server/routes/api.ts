@@ -1,21 +1,17 @@
 /**
  * 面板数据 API（routes/api.js，挂载前缀 /api）
  * - 读写 + 乐观锁 + api/changes 增量接口（面板轮询）
- * - 设置抽屉：文献目录管理 / 会话绑定管理
- * - 文献扫描、Zotero 探测、指标序列
+ * - 文献扫描、Zotero 探测、指标序列 / 指标目标值
  *
  * 实验记录中心化改造后：移除 plan / report / assessment / proposals / rejected / review 相关路由。
  */
-import fs from "node:fs";
-import path from "node:path";
 import { createStore } from "../server/store.ts";
 import { triageWorklog } from "../server/triage.ts";
-import { readSettings, writeSettings, scanAllSources, zoteroProbe, runEnhancementLoop, enrichCitationCounts } from "../server/sources.ts";
+import { readSettings, writeSettings, scanAllSources, zoteroProbe, runEnhancementLoop } from "../server/sources.ts";
 import { buildMetricsSeries } from "../server/metrics.ts";
 import { parseMetricTable } from "../server/import-parser.ts";
 import {
   WorklogImportBodySchema,
-  LiteratureAppendBodySchema,
   SettingsMetricsBodySchema,
 } from "../server/schemas.ts";
 
@@ -60,16 +56,7 @@ export default function registerApiRoutes(app: any, ctx: import("../server/types
     return c.json(state);
   });
 
-  // ── E5：全文按需读取（AI 侧 / 后续全文阅读用） ────────────
-  app.get("/literature/fulltext", (c: any) => {
-    const id = c.req.query("id") || "";
-    const lit = store.read("literature");
-    const entry = (lit.entries || []).find((e: any) => e.zoteroKey === id || e.id === id);
-    if (!entry) return c.json({ error: "not_found" }, 404);
-    return c.json({ ok: true, fullText: entry.fullText || null, fullTextParsed: entry.fullTextParsed || null, title: entry.title });
-  });
-
-  // ── E4：一键清除失效镜像（zoteroGone 条目，用户主动操作） ──
+    // ── E4：一键清除失效镜像（zoteroGone 条目，用户主动操作） ──
   app.post("/literature/purge-gone", (c: any) => {
     const lit = store.read("literature");
     const gone = (lit.entries || []).filter((e: any) => e.zoteroGone);
@@ -209,53 +196,7 @@ export default function registerApiRoutes(app: any, ctx: import("../server/types
     });
   });
 
-  // ── 实验记录 AI 巡检（手动触发） ─────────────────────────
-  app.post("/worklog/triage", async (c: any) => {
-    
-    let body: Record<string, any> = {};
-    try {
-      body = await c.req.json();
-    } catch {}
-    const force = Boolean(body?.force);
-    const result = /** @type {any} */ (await triageWorklog(ctx, store, { force }).catch((err: any) => ({
-      error: "triage_failed",
-      detail: err instanceof Error ? err.message : String(err),
-    })));
-    return c.json({ ok: !(result as any)?.error, ...(result as any) });
-  });
-
-  // ── literature 追加式（扫描入库共用） ────────────────
-  app.post("/literature/append", async (c: any) => {
-    /** @type {Record<string, any>} */
-    let body;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "invalid_json" }, 400);
-    }
-    const bodyCheck = LiteratureAppendBodySchema.safeParse(body ?? {});
-    if (!bodyCheck.success) {
-      return c.json({ error: "invalid_body", detail: bodyCheck.error.issues[0]?.message || "invalid body" }, 400);
-    }
-    const items = bodyCheck.data.entries;
-    if (items.length === 0) return c.json({ ok: true, appended: 0 });
-    const result = store.append("literature", items);
-    return c.json({ ok: true, appended: result.appended, data: result.data });
-  });
-
-  // ── E5：手动触发 OpenAlex 引用数补全（多轮铺完） ──────────
-  app.post("/literature/enrich-cites", async (c: any) => {
-    let processed = 0;
-    for (let round = 0; round < 8; round++) {
-      const r = await enrichCitationCounts(ctx, store, 5);
-      processed += r.processed;
-      if (r.processed === 0) break;
-    }
-    store.bump("literature");
-    return c.json({ ok: true, processed });
-  });
-
-  // ── 文献扫描（手动） ──────────────────────────────────────
+        // ── 文献扫描（手动） ──────────────────────────────────────
   app.post("/scan", async (c: any) => {
     try {
       const { entries, warnings, sourceStats } = await scanAllSources(ctx, store);
@@ -370,27 +311,4 @@ export default function registerApiRoutes(app: any, ctx: import("../server/types
     return c.json({ ok: true, metricTargets: next.metricTargets || {} });
   });
 
-  // ── 快照/回退 ─────────────────────────────────────────────
-  app.get("/snapshots/:name", (c: any) => {
-    const name = c.req.param("name");
-    if (!WRITABLE.has(name)) return c.json({ error: "invalid_target" }, 400);
-    return c.json({ snapshots: store.listSnapshots(name) });
-  });
-
-  app.post("/snapshots/:name/rollback", async (c: any) => {
-    const name = c.req.param("name");
-    if (!WRITABLE.has(name)) return c.json({ error: "invalid_target" }, 400);
-    let toVersion;
-    try {
-      const body = await c.req.json();
-      toVersion = body?.toVersion;
-    } catch {}
-    if (toVersion === undefined) {
-      const q = c.req.query("toVersion");
-      if (q !== undefined && q !== null && q !== "") toVersion = Number(q);
-    }
-    const result = store.rollback(name, toVersion);
-    if (!result.ok) return c.json({ error: result.error }, 400);
-    return c.json({ ok: true, data: result.data });
-  });
 }

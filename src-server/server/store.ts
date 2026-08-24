@@ -315,13 +315,6 @@ export function createStore(dataDir: string): import("./types.ts").StoreApi {
     return next;
   }
 
-  function setUpdate(key: string, value: number): any {
-    const updates = read("updates");
-    const next = { ...updates, [key]: value };
-    write("updates", next);
-    return next;
-  }
-
   /**
    * 镜像替换（Zotero 同步专用）：按 keyField 全量同步
    * 库中所有 keyField 非空的条目被 items 整体替换（以源为准），
@@ -362,7 +355,6 @@ export function createStore(dataDir: string): import("./types.ts").StoreApi {
     rollback,
     listSnapshots,
     bump,
-    setUpdate,
     getUpdates: () => read("updates"),
     now: nowIso,
   };

@@ -55,9 +55,6 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, dryRun: Boolean(dryRun) }),
     }),
-  exportFile: (type: string, id?: string) =>
-    request<any>(`export/${type}${id ? `?id=${id}` : ''}`),
-  rollback: (name: string) => request<any>(`snapshots/${name}/rollback`, { method: 'POST' }),
 };
 
 export { hana };

@@ -67,14 +67,6 @@ export const IconRefresh = (p: IProps) => (
   </I>
 );
 
-/* ── 设置/齿轮（简化为闭合圆 + 短齿） ── */
-export const IconGear = (p: IProps) => (
-  <I {...p}>
-    <circle cx="12" cy="12" r="3.2" />
-    <path d="M12 4.5v2.2M12 17.3v2.2M4.5 12h2.2M17.3 12h2.2M6.7 6.7l1.6 1.6M15.7 15.7l1.6 1.6M17.3 6.7l-1.6 1.6M8.3 15.7l-1.6 1.6" />
-  </I>
-);
-
 /* ── 关闭 X ── */
 export const IconX = (p: IProps) => (
   <I {...p}>
@@ -113,24 +105,6 @@ export const IconLink = (p: IProps) => (
   </I>
 );
 
-/* ── 放大镜 ── */
-export const IconSearch = (p: IProps) => (
-  <I {...p}>
-    <circle cx="11" cy="11" r="6.5" />
-    <path d="M16 16l4 4" />
-  </I>
-);
-
-/* ── 机器人 ── */
-export const IconBot = (p: IProps) => (
-  <I {...p}>
-    <rect x="5" y="8" width="14" height="9" rx="2" />
-    <path d="M12 8V5M9 5h6" />
-    <path d="M9.5 12v1.5M14.5 12v1.5" />
-    <path d="M2.5 12.5h2.5M19 12.5h2.5" />
-  </I>
-);
-
 /* ── 在线/离线 圆点（描边） ── */
 export const IconDotOn = (p: IProps) => (
   <I {...p}>
@@ -161,34 +135,15 @@ export const IconDoc = (p: IProps) => (
   </I>
 );
 
-/* ── 箭头 --- 右 ── */
-export const IconArrowRight = (p: IProps) => (
-  <I {...p}>
-    <path d="M5 12h14M13 6l6 6-6 6" />
-  </I>
-);
-
 /* ── 折叠 chevron 上/下 ── */
 export const IconChevronUp = (p: IProps) => (
   <I {...p}>
     <path d="M6 15l6-6 6 6" />
   </I>
 );
-export const IconChevronDown = (p: IProps) => (
-  <I {...p}>
-    <path d="M6 9l6 6 6-6" />
-  </I>
-);
 export const IconChevronRight = (p: IProps) => (
   <I {...p}>
     <path d="M9 6l6 6-6 6" />
-  </I>
-);
-
-/* ── 扫描 ── */
-export const IconScan = (p: IProps) => (
-  <I {...p}>
-    <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M8 12h8" />
   </I>
 );
 

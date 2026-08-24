@@ -265,7 +265,6 @@ console.log("== sources 全文链与同步安全链测试 ==");
     meta: {},
   });
   store.write("gantt", { version: 0, tasks: [] });
-  store.write("plan", { version: 0, title: "", hypothesis: "", route: "", milestones: [] });
   store.write("literature", { version: 0, entries: [] });
   const llmOut = {
     fields: [],
@@ -273,9 +272,7 @@ console.log("== sources 全文链与同步安全链测试 ==");
     system: "",
     taskProgress: [],
     events: [],
-    planNote: null,
     durationHours: null,
-    needRedo: false,
   };
   const ctx = baseCtx(makeFetch([]), async () => ({ text: JSON.stringify(llmOut) }));
   const r1 = await triageWorklog(ctx, store);

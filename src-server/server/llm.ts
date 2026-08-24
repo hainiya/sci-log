@@ -115,33 +115,6 @@ function readPrompt(ctx: import("./types.ts").ToolCtx, name: string): string {
   }
 }
 
-/** 从用户消息提取检索关键词（文献自动搜集用）
- * @param {import("./types.ts").ToolCtx} ctx
- * @param {string} text
- * @returns {Promise<string[]>}
- */
-export async function extractKeywords(ctx: import("./types.ts").ToolCtx, text: string): Promise<string[]> {
-  const base = readPrompt(ctx, "keyword-extractor.md");
-  const result = await sampleText(ctx, {
-    messages: [
-      { role: "system", content: base },
-      { role: "user", content: text },
-    ],
-    maxTokens: 200,
-    temperature: 0.2,
-  });
-  const raw = String(result?.text || "").trim();
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.map((k: any) => String(k).trim()).filter(Boolean);
-  } catch {}
-  return raw
-    .split(/[,，;；\n]/)
-    .map((k: any) => k.trim())
-    .filter(Boolean)
-    .slice(0, 6);
-}
 
 /**
  * C3：从全文生成 2-3 句摘要（abstract 为空的 Zotero 条目用）

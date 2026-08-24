@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, hana } from '../api';
-import { IconBook, IconRefresh, IconSparkle, IconFolder, IconDoc, IconX, IconLink, IconDotOn, IconDotOff, IconScan, IconTrash, IconWarning, IconExternal, IconNew } from '../components/Icons';
+import { IconBook, IconRefresh, IconSparkle, IconFolder, IconDoc, IconX, IconLink, IconDotOn, IconDotOff, IconTrash, IconWarning, IconExternal, IconNew } from '../components/Icons';
 
 type Props = {
   state: any;

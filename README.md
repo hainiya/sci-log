@@ -38,8 +38,7 @@
 │  Dashboard/Gantt/      │         │  tools/*.js    Agent 接口        │
 │  Calendar/Metrics/     │         │  routes/*.js   面板 API          │
 │  Worklog/Literature/   │         │  server/*.js   业务逻辑          │
-│  Settings/Markdown     │         └───────┬────────────────────────┘
-└───────────┬────────────┘                 │
+└───────────┬────────────┘         └───────┬────────────────────────┘
             └───────────── store.js ◄──────┘
                          JSON 文件 + 乐观锁 + 快照 + 水位线
 ```
@@ -56,27 +55,26 @@ sci-log/
 ├── vitest.config.ts       # 前端测试配置（jsdom）
 ├── tsconfig.json
 ├── src-server/            # ★ Node 侧源码（构建后输出到插件根）★
-│   ├── index.js           # lifecycle：会话绑定/节流同步 Zotero/30min 镜像/工作流状态机
-│   ├── tools/*.js         # 5 个对话工具（manage_schedule/collect_literature/log_work/export_report/analyze_metrics）
-│   ├── routes/*.js        # ui.js（面板路由 shell）/ api.js（面板 API）/ export.js（导出）
+│   ├── index.js           # lifecycle：会话绑定/节流同步 Zotero/30min 镜像
+│   ├── tools/*.js         # 8 个对话工具（manage_schedule/log_work/collect_literature/export_report/analyze_metrics/prepare_worklog/commit_worklog/cancel_worklog）
+│   ├── routes/*.js        # ui.js（面板路由 shell）/ api.js（面板 API）
 │   └── server/            # 共享业务层
 │       ├── store.js       # 数据层：乐观锁/append/upsertByKey/snapshot/rollback/bump/compact
 │       ├── sources.js     # Zotero 同步 + 增强循环 + 引用数补全
 │       ├── llm.js         # sampleText 封装、triageWorkEntry、nextStepAdvice
 │       ├── triage.js      # 实验记录巡检（自动巡检）
 │       ├── metrics.js     # buildMetricsSeries / filterSeries / 文献基准
-│       ├── parsers.js / import-parser.js   # 指标/仪器表格解析
+│       ├── import-parser.js   # 指标/仪器表格解析
 │       ├── worklog-gen.js / worklog-parse.js # AI 生成草稿解析
 │       ├── literature-log.js  # 文献动作日志化（动作写回实验记录）
 │       └── binding.js     # 会话绑定
 ├── ui/                    # React 前端（类型 TSX）
 │   ├── Panel.tsx          # 顶层：createRoot 自挂载，tab 路由，widget/page 分派，轮询
 │   ├── api.ts             # hana.api.fetch 封装（路径约定、错误处理）
-│   ├── components/        # Dashboard / GanttChart / CalendarView / MetricsChart / ConfirmButton / Markdown
+│   ├── components/        # Dashboard / GanttChart / CalendarView / MetricsChart / ConfirmButton
 │   ├── panels/            # SchedulePanel / WorklogPanel / MetricsPanel / LiteraturePanel
-│   ├── settings/          # SettingsDrawer
 │   └── panel.css          # --mrc-* 主题变量，暗色主题兜底
-├── prompts/               # LLM prompt（keyword/next-step/worklog-triage…）
+├── prompts/               # LLM prompt（next-step-advisor/worklog-generate/worklog-triage）
 ├── assets/                # ★ 构建产物（panel.js / panel.css）★
 ├── tests/                 # 后端 node 单测 + tests/ui/ 前端 vitest 测试
 └── docs/                  # 附加文档
@@ -96,9 +94,9 @@ sci-log/
 | `worklog.json` | `version / entries[] / updatedAt` | **实验记录（主线）** |
 | `literature.json` | `version / entries[] / updatedAt / lastCompactedAt` | 文献库（追加式 + 镜像） |
 | `updates.json` | `{gantt,calendar,worklog,literature}` | 水位线（增量轮询/巡检触发） |
-| `settings.json` | `updatedAt / metricTargets / searchYearWindow` | 面板配置 |
+| `settings.json` | `updatedAt / metricTargets` | 面板配置 |
 | `collections.json` | `version / collections[]` | Zotero collection 只读镜像 |
-| `snapshots/<name>/` | `*.json` | 版本快照（最多 20 个，可回退） |
+| `snapshots/<name>/` | `*.json` | 版本快照（最多 20 个，自动快照） |
 
 **并发规则（`store.js`）**：除 `literature` 的追加式写入外，所有可编辑文件顶层含 `version`，任何写入必须携带读取时的 `version`；`version` 匹配 → 写入并 `version+1`、生成快照、推进 `updates.json` 水位线；不匹配 → 拒绝并返回最新数据（供前端重试）。`read()` 会对 `version` 做数值归一化，避免字符串版本导致永久锁死。
 
@@ -112,6 +110,9 @@ sci-log/
 |---|---|---|
 | `manage_schedule` | 甘特任务 / 日历日程增删改（直接写库） | `plugin_output`（AI 写即生效）|
 | `log_work` | 记录实验：写入实验记录 + AI 巡检补进度/日程 + 下一步建议 | `plugin_output`（AI 写即生效）|
+| `prepare_worklog` | 生成实验记录草稿并暂存（供交互式卡片确认落库/取消） | `plugin_output`（AI 写即生效）|
+| `commit_worklog` | 落库交互式卡片上的实验记录草稿（含 AI 巡检直接写库） | `plugin_output`（AI 写即生效）|
+| `cancel_worklog` | 取消交互式卡片上的实验记录草稿 | `plugin_output`（AI 写即生效）|
 | `collect_literature` | Zotero 本地扫描收纳入库（动作日志化到实验记录） | `external_side_effect`（调外部 Zotero API）|
 | `export_report` | 导出实验记录为 Markdown 下载卡片（`toolCtx.stageFile` 投递 SessionFile） | `plugin_output`（`session_file_output`）|
 | `analyze_metrics` | 指标趋势查询（只读） | `read` |
@@ -137,8 +138,6 @@ sci-log/
 | `settings/metrics` | POST | 指标目标值配置 |
 | `metrics/series` | GET | 指标序列（供指标面板）|
 | `sources/zotero` | GET | Zotero 连接状态 |
-| `export/<type>` | GET | 导出（`worklog` 等）|
-| `snapshots/<name>/rollback` | POST | 版本回退 |
 
 **返回约定**：所有接口响应需为 `{ok, ...}` 或 `{error, ...}` 形态；`PUT` 冲突返回 `409` + `{error:"version_conflict", data: 最新}`，前端据此用最新数据重试。
 
@@ -158,7 +157,7 @@ sci-log/
 
 - 通过 `ctx.bus.subscribe` 监听会话事件（底层/未文档化事件 `session_user_message`），驱动：
   - **Zotero 节流同步**：绑定会话检测到用户消息，10 分钟节流内自动同步本地库（受 `autoCollectEnabled` 控制）。
-  - **AI 实验记录生成**：用户消息含「记录」关键词时，AI 总结成草稿并在会话内询问确认（回复「记录」落库，见"已知边界"）。
+  - **AI 实验记录生成**：由 Agent 调用 `prepare_worklog` 生成草稿并 cast 交互式确认卡，卡片按钮经 data-card-manifest 绑 `commit_worklog` / `cancel_worklog` 落库/取消（后台不再维护文本确认状态机）。
 - 定时任务：Zotero 30 分钟全量镜像；文献新增自动触发摘要/关键词增强链路。
 
 > `ctx.bus.subscribe` 句柄与 `setInterval` 的 Timeout **含循环引用**，不能挂到插件实例 `this`（宿主序列化会抛 `Converting circular structure to JSON`）；事件名属底层用法，宿主文档未公开。
@@ -209,7 +208,7 @@ npm run typecheck      # TypeScript 检查
 - 文献来源仅 Zotero 本地库（在线检索已移除）。
 - CAJ 文件仅识别并标注「暂不支持解析」。
 - 面板导出依赖宿主注入的会话标识；不可用时降级为对话指令导出。
-- **实验记录「AI 主导录入」确认方式**：当前用**会话内文本确认**（AI 总结成草稿，回复「记录」确认落库 / 「不」取消）。这是 Hana 当前公开 SDK 契约下的可用形态；最终目标是「交互式卡片」（可点击的 记录 / 取消 按钮）。因 Hana 的 `chat.surface` 当前仅支持原生 transcript、富交互卡片尚未进入公开 SDK 契约（见宿主 `PLUGINS.md` / `PLUGIN_SDK.md`），此目标将作为后续演进方向。
+- **实验记录「AI 主导录入」确认方式**：AI 用 `prepare_worklog` 生成草稿，cast 确认卡片，卡片「记录/取消」按钮经 data-card-manifest 绑 `commit_worklog` / `cancel_worklog` 落库/取消；未确认前不落库。
 
 ---
 

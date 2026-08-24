@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { MetricsChart, MetricSeries, MetricPoint, PALETTE } from '../components/MetricsChart';
-import { IconFlask, IconChevronDown, IconChevronRight, IconChevronUp, IconWarning } from '../components/Icons';
+import { IconFlask, IconChevronRight, IconChevronUp, IconWarning } from '../components/Icons';
 
 type Props = {
   state: any;

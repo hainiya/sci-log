@@ -1,4 +1,4 @@
-import { Component, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, ReactNode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HanaThemeProvider } from '@hana/plugin-components';
 import '@hana/plugin-components/styles.css';
