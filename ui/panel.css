@@ -532,6 +532,7 @@ button.mrc-dash-card:hover { border-color: var(--mrc-accent); }
 .mrc-empty {
   display: inline-flex;
   align-items: center;
+  line-height: 1;
 }
 .mrc-btn, .mrc-btn.small, .mrc-head-actions .mrc-btn, .mrc-paper-actions .mrc-btn, .mrc-inline-confirm .mrc-btn { gap: 5px; }
 .mrc-section-title, .mrc-dash-title { gap: 6px; }
