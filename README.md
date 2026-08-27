@@ -4,7 +4,7 @@
 
 - 插件 ID：`sci-log`
 - 类型：`full`（对话工具 + 生命周期 + 面板 UI）
-- 信任级别：`full-access` · 版本：`1.2.1` · 最低宿主：`0.159.0`
+- 信任级别：`full-access` · 版本：`1.3.0` · 最低宿主：`0.680.0`
 - 宿主：Hana（openhanako）
 
 > **设计主线**：实验记录中心化。AI 主要承担实验记录的**记录与巡检**，用户主要是**审校与补充**——AI 写操作**直接落库**（乐观锁防并发覆盖），不再有"提案-确认"环节。面板首屏是"已记录的实验记录"，手动记录仅作为纠错入口。
@@ -179,14 +179,15 @@ sci-log/
 ## 开发与构建
 
 ```bash
-npm install
-npm run build:server   # esbuild 打包 src-server/ → 插件根 index.js/tools/routes
-npm run build:ui       # Vite 构建前端 → assets/panel.js|css
-npm run build          # 两者
-npm run typecheck      # TypeScript 检查
+bun install            # 或 npm install（workspace 声明兼容）
+bun run install:sdk    # 首次：从 hana-plugin-creator skill 解包 SDK 到 vendor/sdk/packages/
+bun run build:server   # esbuild 打包 src-server/ → 插件根 index.js/tools/routes
+bun run build:ui       # Vite 构建前端 → assets/panel.js|css
+bun run build          # 两者（prebuild 自动跑 install:sdk + 版本校验）
+bun run typecheck      # TypeScript 检查
 ```
 
-**`@hana/*` 依赖来源**：`package.json` 中 `@hana/plugin-*` 指向 hana-plugin-creator skill 自带的 SDK tarball（`~/.hanako/skills/hana-plugin-creator/assets/sdk/hana-plugin-*-0.0.0.tgz`）。该路径为**本机** SDK 副本，clone 到其它环境需自行提供同版本 SDK（或改用仓库内 self-contained 方案）。
+**`@hana/*` 依赖来源**：`package.json` 中 `@hana/plugin-*` 通过 **bun workspaces** 引用仓库内 `vendor/sdk/packages/*`（由 `scripts/install-sdk.mjs` 从 hana-plugin-creator skill 的 SDK tarball 解包生成，已随仓库分发）。clone 后先 `npm run install:sdk` 再 `npm install` 即可，不依赖本机绝对路径。
 
 **后端改动必须改 `src-server/`**；构建仅在 `build:server` 后把 `src-server/` 打包到插件根。
 
