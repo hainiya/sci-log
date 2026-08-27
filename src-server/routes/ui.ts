@@ -1,40 +1,13 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 /**
- * @param {any} app
- * @param {import("../server/types.ts").ToolCtx} ctx
+ * 面板路由壳（routes/ui.js，挂载 /page /widget）
+ * - 静态资源走官方 assets 契约：/api/plugins/{pluginId}/assets/panel.css|js
+ *   （宿主以 HttpOnly asset session cookie 保护，跨站 iframe 亦可加载，见 @hana/plugin-sdk README）
+ * - 保留 hana-css / hana-theme query 参数（主题兼容协议）
+ * - 保留极小的内联诊断脚本（仅调试用，非大资源）
  */
 export default function registerPluginUiRoutes(app: any, ctx: import("../server/types.ts").ToolCtx) {
   app.get("/page", (c: any) => c.html(renderShell(c, ctx, "page")));
   app.get("/widget", (c: any) => c.html(renderShell(c, ctx, "widget")));
-}
-
-// 内联缓存：CSS/JS 内容不变，避免每次请求都读盘
-const inlineCache = new Map();
-
-/**
- * @param {import("../server/types.ts").ToolCtx} ctx
- * @param {string} name
- * @returns {string|null}
- */
-function inlineAsset(ctx: import("../server/types.ts").ToolCtx, name: string): string|null {
-  if (inlineCache.has(name)) return inlineCache.get(name);
-  const candidates = [];
-  if (ctx?.pluginDir) candidates.push(path.join(ctx.pluginDir, "assets", name));
-  candidates.push(path.join(path.dirname(fileURLToPath(import.meta.url)), "assets", name));
-  for (const p of candidates) {
-    try {
-      const content = fs.readFileSync(p, "utf8");
-      inlineCache.set(name, content);
-      return content;
-    } catch {
-      // try next candidate
-    }
-  }
-  inlineCache.set(name, null);
-  return null;
 }
 
 /**
@@ -48,14 +21,8 @@ function renderShell(c: any, ctx: import("../server/types.ts").ToolCtx, surface:
   const theme = c.req.query("hana-theme") || "inherit";
   const title = "科研工作";
 
-  // 内联 CSS/JS：桌面端 iframe 跨站（file:// 父页 → http://127.0.0.1）时，
-  // SameSite=Strict 的 asset session cookie 不会发送，外链 assets 必然 403。
-  // 全部内联进 HTML 后不再依赖插件 assets 路由，任何环境都能加载。
-  const css = inlineAsset(ctx, "panel.css") || "";
-  const js = inlineAsset(ctx, "panel.js") || "";
-  // 防止 bundle 内容中出现闭合标签字面量截断 HTML
-  const safeCss = css.replace(/<\/style>/gi, "<\\/style>");
-  const safeJs = js.replace(/<\/script>/gi, "<\\/script>");
+  // 官方 assets 契约：资源由宿主 assets 路由提供（@hana/plugin-sdk hana.assets.url 同构路径）
+  const assetsBase = `/api/plugins/${ctx.pluginId}/assets/`;
 
   return `<!doctype html>
 <html>
@@ -64,7 +31,7 @@ function renderShell(c: any, ctx: import("../server/types.ts").ToolCtx, surface:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
   ${hanaCss ? `<link rel="stylesheet" href="${escapeAttr(hanaCss)}">` : ""}
-  <style>${safeCss}</style>
+  <link rel="stylesheet" href="${escapeAttr(assetsBase)}panel.css">
 </head>
 <body data-hana-theme="${escapeAttr(theme)}" data-surface="${surface}">
   <div id="root" data-surface="${surface}"></div>
@@ -90,7 +57,7 @@ function renderShell(c: any, ctx: import("../server/types.ts").ToolCtx, surface:
       if (el && window.__mrcDiag.length) el.style.display = 'block';
     }, 3000);
   </script>
-  <script type="module">${safeJs}</script>
+  <script type="module" src="${escapeAttr(assetsBase)}panel.js"></script>
 </body>
 </html>`;
 }
