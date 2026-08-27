@@ -27,6 +27,10 @@ export default function registerApiRoutes(app: any, ctx: import("../server/types
   const sessionIdOf = (c: any) => {
     const header = c.req.header("x-hana-plugin-surface-session");
     if (header && header.trim()) return header.trim();
+    // #1629：iframe src 上的会话凭证 query 名是 pluginSurfaceSession（@hana/plugin-protocol PLUGIN_SURFACE_SESSION_QUERY）
+    const q = c.req.query("pluginSurfaceSession");
+    if (q && q.trim()) return q.trim();
+    // 旧兼容：历史上部分壳用 sessionId query
     return c.req.query("sessionId") || null;
   };
 
