@@ -10,6 +10,8 @@ export interface ToolCtx {
   dataDir: string;
   /** 插件安装目录（prompts/ 读取用） */
   pluginDir?: string;
+  /** 插件 ID（宿主注入，官方 assets/API 路径前缀用） */
+  pluginId?: string;
   /** 绑定的宿主会话 id */
   sessionId?: string;
   /** 绑定的宿主会话路径 */
