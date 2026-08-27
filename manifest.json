@@ -2,15 +2,18 @@
   "manifestVersion": 1,
   "id": "sci-log",
   "name": "科研工作",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "科研工作：实验记录中心 + 甘特图/日历 + 指标趋势 + 文献库（Zotero 收纳）",
-  "minAppVersion": "0.159.0",
+  "minAppVersion": "0.680.0",
   "trust": "full-access",
+  "entry": "index.js",
+  "activationEvents": ["onStartup"],
   "capabilities": [
     "session",
     "model.sample",
     "network.fetch"
   ],
+  "sensitiveCapabilities": [],
   "network": {
     "allowedHosts": [
       "localhost",
@@ -24,12 +27,18 @@
   },
   "contributes": {
     "page": {
-      "title": "科研工作",
+      "title": {
+        "zh": "科研工作",
+        "en": "Research Log"
+      },
       "route": "/page",
       "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M5 5h14v14H5z\"/><path d=\"M9 9h6M9 13h6\"/></svg>"
     },
     "widget": {
-      "title": "科研工作",
+      "title": {
+        "zh": "科研工作",
+        "en": "Research Log"
+      },
       "route": "/widget",
       "icon": "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M8 7l-4 5 4 5\"/><path d=\"M16 7l4 5-4 5\"/></svg>"
     },
