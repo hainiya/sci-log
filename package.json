@@ -1,19 +1,21 @@
 {
   "name": "materials-research-copilot",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
+  "workspaces": ["vendor/sdk/packages/*"],
   "dependencies": {
-    "@hana/plugin-components": "file:C:/Users/liao2/.hanako/skills/hana-plugin-creator/assets/sdk/hana-plugin-components-0.0.0.tgz",
-    "@hana/plugin-protocol": "file:C:/Users/liao2/.hanako/skills/hana-plugin-creator/assets/sdk/hana-plugin-protocol-0.0.0.tgz",
-    "@hana/plugin-runtime": "file:C:/Users/liao2/.hanako/skills/hana-plugin-creator/assets/sdk/hana-plugin-runtime-0.0.0.tgz",
-    "@hana/plugin-sdk": "file:C:/Users/liao2/.hanako/skills/hana-plugin-creator/assets/sdk/hana-plugin-sdk-0.0.0.tgz",
+    "@hana/plugin-components": "workspace:*",
+    "@hana/plugin-protocol": "workspace:*",
+    "@hana/plugin-runtime": "workspace:*",
+    "@hana/plugin-sdk": "workspace:*",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "zod": "^3.25.0"
   },
   "scripts": {
-    "prebuild": "node scripts/sync-version.mjs",
+    "prebuild": "node scripts/sync-version.mjs && node scripts/install-sdk.mjs",
+    "install:sdk": "node scripts/install-sdk.mjs",
     "build:ui": "vite build",
     "build:server": "esbuild src-server/index.ts src-server/tools/*.ts src-server/routes/*.ts --bundle --format=esm --platform=node --outbase=src-server --outdir=. --log-level=warning --external:fs --external:http --external:https --external:url",
     "build": "npm run build:server && npm run build:ui",
