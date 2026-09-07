@@ -215,13 +215,10 @@ export async function translateAbstract(ctx: import("./types.ts").ToolCtx, entry
 export async function triageWorkEntry(ctx: import("./types.ts").ToolCtx, { entries, gantt, literature, today }: { entries: import("./types.ts").WorklogEntry[], gantt: import("./types.ts").GanttDoc, literature: import("./types.ts").LiteratureDoc, today?: string }): Promise<import("./types.ts").TriageResult | null> {
   const base = readPrompt(ctx, "worklog-triage.md");
   const litList = (literature?.entries || [])
-    .slice(-120)
+    .slice(-20)
     .map((e: any) => ({
       id: e.id || e.zoteroKey || null,
-      zoteroKey: e.zoteroKey || null,
       title: e.title,
-      doi: e.doi || null,
-      keywords: (e.keywords || []).slice(0, 8),
     }))
     .filter((e: any) => e.id);
   const taskList = (gantt?.tasks || []).map((t: any) => ({
@@ -235,8 +232,8 @@ export async function triageWorkEntry(ctx: import("./types.ts").ToolCtx, { entri
       id: e.id,
       sampleId: e.sampleId || null,
       date: e.date || null,
-      content: String(e.content || "").slice(0, 2000),
-      data: String(e.data || "").slice(0, 1500) || null,
+      content: String(e.content || "").slice(0, 800),
+      data: String(e.data || "").slice(0, 400) || null,
       taskId: e.taskId || null,
     })),
     "甘特任务": taskList,
@@ -249,8 +246,9 @@ export async function triageWorkEntry(ctx: import("./types.ts").ToolCtx, { entri
       { role: "system", content: base },
       { role: "user", content: JSON.stringify(docs, null, 2) },
     ],
-    maxTokens: 900,
-    temperature: 0.2,
+    maxTokens: 1500,
+    temperature: 0.1,
+    critical: true,
   });
 
   const raw = String(result?.text || "").trim();
@@ -401,6 +399,7 @@ export async function nextStepAdvice(ctx: import("./types.ts").ToolCtx, worklog:
     ],
     maxTokens: 800,
     temperature: 0.4,
+    critical: true,
   });
   const raw = String(result?.text || "").trim();
   const text = raw.split("<!--SCHEDULE-->")[0].trim();

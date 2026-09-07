@@ -118,6 +118,7 @@ export async function execute(input: Record<string, any>  = {}, toolCtx: import(
   const autoTriage = toolCtx.config?.get?.("autoTriage") ?? store.read("settings")?.autoTriage ?? true;
   let triageSummary = null;
   let out = null;
+  let fallbackGanttSuggestion = null; // 规则兑底生成的甘特建议（triage 失败/无建议时）
   if (autoTriage) {
     try {
       out = await triageWorkEntry(toolCtx, {
@@ -154,6 +155,41 @@ export async function execute(input: Record<string, any>  = {}, toolCtx: import(
     } catch (err) {
       toolCtx?.log?.warn?.(`log_work duration enrich failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+    worklogEntry.durationHours = out.durationHours;
+    if (out.startDate) worklogEntry.startDate = out.startDate;
+  } else if (!worklogEntry.durationHours) {
+    // 规则兑底：triage 失败或未输出时长时，用正则从文本提取（min/h/天）
+    try {
+      const joined = [String(worklogEntry.content || ""), String(worklogEntry.data || "")].join("\n");
+      // 优先识别显式总时长（"总长约 244h""共 10 天""总时长 48 小时"），避免与分段时长重复相加
+      const explicit = joined.match(/(?:总长|总共|总时长|共|约)\s*(\d+(?:\.\d+)?)\s*(h|hour|hours|小时|天|d|day|days)/i);
+      let fallback: number | null = null;
+      if (explicit) {
+        const val = Number(explicit[1]);
+        const unit = explicit[2].toLowerCase();
+        fallback = unit === "h" || unit === "hour" || unit === "hours" || unit === "小时"
+          ? val
+          : val * 24;
+      } else {
+        // 无显式总时长：仅从 data（结构化参数）逐段相加，避免 content 描述与 data 重复
+        const dataOnly = String(worklogEntry.data || "");
+        let total = 0;
+        for (const m of [...dataOnly.matchAll(/(\d+(?:\.\d+)?)\s*min(?:ute)?s?/gi)]) total += Number(m[1]);
+        for (const m of [...dataOnly.matchAll(/(\d+(?:\.\d+)?)\s*h(?:our)?s?/gi)]) total += Number(m[1]) * 60;
+        for (const m of [...dataOnly.matchAll(/(\d+(?:\.\d+)?)\s*天/gi)]) total += Number(m[1]) * 24 * 60;
+        fallback = total > 0 ? Math.round((total / 60) * 10) / 10 : null;
+      }
+      if (fallback !== null) {
+        store.update("worklog", undefined, (cur: any) => ({
+          entries: (cur.entries || [] as any[]).map((e: any) =>
+            e.id === worklogEntry.id ? { ...e, durationHours: fallback } : e
+          ),
+        }));
+        worklogEntry.durationHours = fallback;
+      }
+    } catch (err) {
+      toolCtx?.log?.warn?.(`log_work duration regex fallback failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // 4. 巡检产出：甘特进度 + 日程（直接写库，与面板异步巡检一致）
@@ -170,8 +206,8 @@ export async function execute(input: Record<string, any>  = {}, toolCtx: import(
     }
     for (const ev of out.events || []) {
       try {
-        store.append("calendar", [
-          {
+        store.update("calendar", undefined, (cur: any) => ({
+          events: [...(cur.events || []), {
             id: newId("evt"),
             title: ev.title,
             date: ev.date,
@@ -179,8 +215,8 @@ export async function execute(input: Record<string, any>  = {}, toolCtx: import(
             endTime: null,
             type: ev.type,
             taskId: null,
-          },
-        ]);
+          }],
+        }));
       } catch (err) {
         toolCtx?.log?.warn?.(`log_work calendar append failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -191,6 +227,53 @@ export async function execute(input: Record<string, any>  = {}, toolCtx: import(
       gantt: (out.taskProgress || []).length,
       calendar: (out.events || []).length,
     };
+  }
+
+  // 4.5 规则甘特建议兑底：triage 未产出甘特建议（或无 suggestions）时，
+  //     若记录含跨天实验时长（≥24h）且甘特无同名任务，生成一条甘特建议供用户确认
+  const joinedText = [String(worklogEntry.content || ""), String(worklogEntry.data || "")].join("\n");
+  if (!(triageSummary && triageSummary.gantt > 0)) {
+    const fallbackDur = worklogEntry.durationHours;
+    if (fallbackDur !== null && fallbackDur !== undefined && Number(fallbackDur) >= 24) {
+      const existingNames = new Set((gantt.tasks || []).map((t: any) => (t.name || "").trim().toLowerCase()));
+      const title = `${worklogEntry.system ? worklogEntry.system + " " : ""}长时程实验`.trim();
+      if (!existingNames.has(title.toLowerCase())) {
+        // 尝试从文本提取开始锚点（如"8/25 进炉""8月25日开始"），否则用记录日期
+        let start = worklogEntry.startDate || null;
+        if (!start) {
+          const m = joinedText.match(/(\d{1,2})\/(\d{1,2})\s*(?:进炉|开始|启动|入炉|装炉)/);
+          const m2 = joinedText.match(/(\d{1,2})月(\d{1,2})日\s*(?:开始|进炉|启动|入炉)/);
+          if (m) {
+            const y = date.slice(0, 4);
+            const mm = String(Number(m[1])).padStart(2, "0");
+            const dd = String(Number(m[2])).padStart(2, "0");
+            const candidate = `${y}-${mm}-${dd}`;
+            if (candidate <= date) start = candidate;
+          } else if (m2) {
+            const y = date.slice(0, 4);
+            const mm = String(Number(m2[1])).padStart(2, "0");
+            const dd = String(Number(m2[2])).padStart(2, "0");
+            const candidate = `${y}-${mm}-${dd}`;
+            if (candidate <= date) start = candidate;
+          }
+        }
+        if (!start) start = date;
+        // 本地时区安全计算结束日（避免 toISOString 的 UTC 偏移导致差一天）
+        const startMs = new Date(start + "T00:00:00").getTime();
+        const endMs = startMs + Math.round(Number(fallbackDur) * 3600 * 1000);
+        const endD = new Date(endMs);
+        const end = `${endD.getFullYear()}-${String(endD.getMonth() + 1).padStart(2, "0")}-${String(endD.getDate()).padStart(2, "0")}`;
+        fallbackGanttSuggestion = {
+          kind: "gantt" as const,
+          title,
+          start,
+          end,
+          date: null,
+          startTime: null,
+          reason: "规则兑底：跨天实验时长",
+        };
+      }
+    }
   }
 
   // 5. 甘特进度更新（直接写库；来自用户输入 progressUpdates）
@@ -228,9 +311,11 @@ export async function execute(input: Record<string, any>  = {}, toolCtx: import(
         if (triageKeys.has(`${item.title}|${item.due}`)) continue;
         if (existingCal.some((ev: any) => ev.title === item.title && sameDay(ev.date, item.due))) continue;
         try {
-          store.append("calendar", [
-            { id: newId("evt"), title: item.title, date: item.due, startTime: null, endTime: null, type: item.type, taskId: null },
-          ]);
+          store.update("calendar", undefined, (cur: any) => ({
+            events: [...(cur.events || []), {
+              id: newId("evt"), title: item.title, date: item.due, startTime: null, endTime: null, type: item.type, taskId: null,
+            }],
+          }));
           scheduleCount += 1;
         } catch (err) {
           toolCtx?.log?.warn?.(`log_work schedule append failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -253,6 +338,11 @@ export async function execute(input: Record<string, any>  = {}, toolCtx: import(
     if (parts.length > 0) {
       lines.push(`AI 已巡检本条并直接补全：${parts.join("、")}`);
     }
+  }
+  if (fallbackGanttSuggestion) {
+    lines.push(
+      `检测到可生成甘特建议（已留待确认）：任务「${fallbackGanttSuggestion.title}」${fallbackGanttSuggestion.start} ~ ${fallbackGanttSuggestion.end}（规则兑底：跨天实验时长）。如需生成，回复确认即可。`
+    );
   }
   if (scheduleCount > 0) {
     lines.push(`AI 下一步建议已排入 ${scheduleCount} 条日程`);

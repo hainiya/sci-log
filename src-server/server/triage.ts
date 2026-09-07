@@ -133,8 +133,8 @@ export async function triageWorklog(ctx: import("./types.ts").ToolCtx, store: im
       // 3. 日程（记录中明确的未来安排，直接写库追加）
       for (const ev of out.events) {
         try {
-          store.append("calendar", [
-            {
+          store.update("calendar", undefined, (cur: any) => ({
+            events: [...(cur.events || []), {
               id: `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
               title: ev.title,
               date: ev.date,
@@ -142,8 +142,8 @@ export async function triageWorklog(ctx: import("./types.ts").ToolCtx, store: im
               endTime: null,
               type: ev.type,
               taskId: null,
-            },
-          ]);
+            }],
+          }));
           updated += 1;
         } catch (err) {
           ctx?.log?.warn(`triageWorklog calendar append failed: ${err instanceof Error ? err.message : String(err)}`);

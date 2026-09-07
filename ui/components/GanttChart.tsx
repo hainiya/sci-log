@@ -233,20 +233,23 @@ export function GanttChart({ tasks, actuals = [], onSave }: Props) {
             const x = LEFT_PAD + row.startDay * dayW;
             const w = Math.max(dayW, (row.endDay - row.startDay + 1) * dayW);
             const task = row.task;
+            // 左侧图注宽度上限：超出截断加省略号，避免长任务名溢出 SVG 左侧被裁（如实际时间线投影的长记录内容）
+            const labelMaxChars = 12; // 12 个汉字 ≈ LEFT_PAD-8 内
+            const rawName = task.kind === 'actual' ? '◆ ' + task.name : task.name;
+            const labelName = rawName.length > labelMaxChars ? rawName.slice(0, labelMaxChars - 1) + '…' : rawName;
             return (
               <g key={row.task.id}>
                 <text x={LEFT_PAD - 8} y={y + BAR_HEIGHT / 2 + 4} fontSize={12} textAnchor="end" fill="var(--mrc-text, #333)" className="mrc-gantt-label">
-                  {task.kind === 'actual' ? '◆ ' : ''}{task.name}
+                  {labelName}
                 </text>
+                <title>{task.kind === 'actual' ? '实际时间线：' + task.name : task.name}</title>
                 {task.kind === 'actual' ? (
                   <g>
                     <rect
                       x={x} y={y} width={w} height={BAR_HEIGHT} rx={5}
                       fill="var(--mrc-actual, #2e9e6b)"
                       opacity={0.55}
-                    >
-                      <title>{`${task.name}（实际时间线）`}</title>
-                    </rect>
+                    />
                     {w > 70 && task.name && (
                       <text
                         x={x + 6}
