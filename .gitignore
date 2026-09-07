@@ -1,8 +1,12 @@
-# 构建产物（仅插件根，不匹配 src-server/ 下的同名源码）
-/index.js
-/tools/
+# v2 App（manifestVersion 2）——零构建直接交付，index.js/lib/tools 均为源码，需跟踪
+# （v1 时代它们是 esbuild 产物故被忽略；v2 形态下无构建步骤，直接进版本库）
+
+# v1 遗留构建产物（保留目录，但产物不跟踪；源码在 src-server/ 与 git 历史中）
 /routes/
 /assets/
+
+# v1 SDK workspaces（vendor/openhanako SDK 源码副本，不进库）
+/vendor/
 
 # 日志与临时文件
 *.log
@@ -14,4 +18,3 @@ node_modules/
 # 系统文件
 .DS_Store
 Thumbs.db
-docs/
